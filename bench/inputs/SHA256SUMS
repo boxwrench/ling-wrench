@@ -9,4 +9,4 @@
 #   <sha256>  code-64k.bin
 #
 # Do not paste hashes from a different corpus. The same values are recorded in
-# results/results.json (inputs[].sha256) and rendered by tools/fill_results.py.
+# ling-3.1/results/results.json (inputs[].sha256) and rendered by tools/fill_results.py.

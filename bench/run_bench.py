@@ -8,8 +8,8 @@ treat the first real run as a shakedown. It implements the protocol in
 two measured repetitions after an excluded warm-up, no speculation, no prefix
 reuse.
 
-Output conforms to schema `ling31-r9700-bench/1` (the exact keys are listed in
-the benchmark brief and in `results/results.json`).
+Output conforms to schema `ling-r9700-bench/1` (the exact keys are listed in
+the benchmark brief and in `ling-3.1/results/results.json`).
 """
 
 import argparse
@@ -137,7 +137,7 @@ def main():
     ap.add_argument("--inputs", default="bench/inputs", help="directory from build_inputs.py")
     ap.add_argument("--exllamav3", default=os.environ.get("EXLLAMAV3_PATH", "."),
                     help="exllamav3 checkout (added to sys.path)")
-    ap.add_argument("--out", default="results/results.json")
+    ap.add_argument("--out", default="ling-3.1/results/results.json")
     ap.add_argument("--revision", default=None, help="HF revision of the model snapshot")
     ap.add_argument("--model-repo", default="boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw")
     ap.add_argument("--bpw", type=float, default=2.10)
@@ -222,7 +222,8 @@ def main():
         cmd = cmd.replace(str(Path(value)), token)
     vram = torch.cuda.max_memory_allocated() / 1024 ** 3 if torch.cuda.is_available() else None
     result = {
-        "schema": "ling31-r9700-bench/1",
+        "schema": "ling-r9700-bench/1",
+        "kind": "exl3-bench",
         "date": date.today().isoformat(),
         "model": {"repo": args.model_repo, "revision": args.revision,
                   "bpw": args.bpw, "size_gb": args.size_gb},

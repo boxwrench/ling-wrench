@@ -1,7 +1,7 @@
 # Results
 
-Rendered from `results/results.json` and `results/quality.json` by
-`tools/fill_results.py`. The JSON is the source of truth; do not edit the marker
+Rendered from `ling-3.1/results/results.json` and
+`ling-3.1/results/quality.json` by `tools/fill_results.py`. The JSON is the source of truth; do not edit the marker
 blocks by hand.
 
 ## One R9700 — Ling-3.1 Wrench EXL3 2.10 bpw
@@ -45,8 +45,8 @@ values. Rebuild them with `bench/build_inputs.py`; the committed
 ## Render
 
 ```sh
-python tools/fill_results.py
-python tools/fill_results.py --check
+python tools/fill_results.py --profile 3.1
+python tools/fill_results.py --profile 3.1 --check
 ```
 
 `--check` exits non-zero if any marker block still contains a placeholder.

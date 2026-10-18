@@ -1,5 +1,5 @@
 {
-  "schema": "ling31-r9700-bench/1",
+  "schema": "ling-r9700-bench/1",
   "date": null,
   "model": {
     "repo": "boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw",
@@ -94,5 +94,6 @@
   },
   "screen": [],
   "peak_vram_gb": null,
-  "peak_ram_gb": null
+  "peak_ram_gb": null,
+  "kind": "exl3-bench"
 }

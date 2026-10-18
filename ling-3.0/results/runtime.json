@@ -1,0 +1,197 @@
+{
+  "schema": "ling-r9700-bench/1",
+  "kind": "serving-check",
+  "date": "2026-10-17",
+  "protocol": "OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; no prefix reuse.",
+  "runtime": {
+    "name": "vLLM",
+    "version": "0.26.1rc1.dev467+g838616875",
+    "backend": "ROCm",
+    "model_format": "compressed-tensors S4/g32"
+  },
+  "hardware": {
+    "gpu": "AMD Radeon 8060S (gfx1151), 128 GB unified",
+    "cpu": "AMD Ryzen AI Max+ 395",
+    "ram": "128 GB unified",
+    "os": "Linux"
+  },
+  "models": [
+    {
+      "name": "Official INT4",
+      "repo": "inclusionAI/Ling-3.0-flash-int4",
+      "status": "SERVES OK",
+      "points": [
+        {
+          "target": 1024,
+          "runs": [
+            {
+              "run": 1,
+              "prompt_tokens": 1047,
+              "prefill_tps": 961.85,
+              "decode_tps": 27.02,
+              "ttft_s": 1.089
+            },
+            {
+              "run": 2,
+              "prompt_tokens": 1047,
+              "prefill_tps": 958.94,
+              "decode_tps": 29.57,
+              "ttft_s": 1.092
+            },
+            {
+              "run": 3,
+              "prompt_tokens": 1047,
+              "prefill_tps": 960.08,
+              "decode_tps": 29.56,
+              "ttft_s": 1.091
+            }
+          ]
+        },
+        {
+          "target": 8192,
+          "runs": [
+            {
+              "run": 1,
+              "prompt_tokens": 8215,
+              "prefill_tps": 1081.61,
+              "decode_tps": 26.17,
+              "ttft_s": 7.595
+            },
+            {
+              "run": 2,
+              "prompt_tokens": 8215,
+              "prefill_tps": 1082.88,
+              "decode_tps": 25.44,
+              "ttft_s": 7.586
+            },
+            {
+              "run": 3,
+              "prompt_tokens": 8215,
+              "prefill_tps": 1081.03,
+              "decode_tps": 28.62,
+              "ttft_s": 7.599
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Wrench",
+      "repo": "boxwrench/Ling-3.0-flash-int4-wrench",
+      "status": "SERVES OK",
+      "points": [
+        {
+          "target": 1024,
+          "runs": [
+            {
+              "run": 1,
+              "prompt_tokens": 1047,
+              "prefill_tps": 949.6,
+              "decode_tps": 29.7,
+              "ttft_s": 1.103
+            },
+            {
+              "run": 2,
+              "prompt_tokens": 1047,
+              "prefill_tps": 961.38,
+              "decode_tps": 27.36,
+              "ttft_s": 1.089
+            },
+            {
+              "run": 3,
+              "prompt_tokens": 1047,
+              "prefill_tps": 962.06,
+              "decode_tps": 27.86,
+              "ttft_s": 1.088
+            }
+          ]
+        },
+        {
+          "target": 8192,
+          "runs": [
+            {
+              "run": 1,
+              "prompt_tokens": 8216,
+              "prefill_tps": 891.14,
+              "decode_tps": 27.0,
+              "ttft_s": 9.22
+            },
+            {
+              "run": 2,
+              "prompt_tokens": 8215,
+              "prefill_tps": 1083.04,
+              "decode_tps": 28.7,
+              "ttft_s": 7.585
+            },
+            {
+              "run": 3,
+              "prompt_tokens": 8215,
+              "prefill_tps": 1084.25,
+              "decode_tps": 26.99,
+              "ttft_s": 7.577
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Generic",
+      "repo": "boxwrench/Ling-3.0-flash-int4-generic",
+      "status": "SERVES OK",
+      "points": [
+        {
+          "target": 1024,
+          "runs": [
+            {
+              "run": 1,
+              "prompt_tokens": 1047,
+              "prefill_tps": 953.44,
+              "decode_tps": 29.54,
+              "ttft_s": 1.098
+            },
+            {
+              "run": 2,
+              "prompt_tokens": 1046,
+              "prefill_tps": 386.66,
+              "decode_tps": 29.49,
+              "ttft_s": 2.705
+            },
+            {
+              "run": 3,
+              "prompt_tokens": 1046,
+              "prefill_tps": 956.77,
+              "decode_tps": 28.11,
+              "ttft_s": 1.093
+            }
+          ]
+        },
+        {
+          "target": 8192,
+          "runs": [
+            {
+              "run": 1,
+              "prompt_tokens": 8214,
+              "prefill_tps": 1089.21,
+              "decode_tps": 28.07,
+              "ttft_s": 7.541
+            },
+            {
+              "run": 2,
+              "prompt_tokens": 8214,
+              "prefill_tps": 1089.54,
+              "decode_tps": 25.43,
+              "ttft_s": 7.539
+            },
+            {
+              "run": 3,
+              "prompt_tokens": 8214,
+              "prefill_tps": 1083.57,
+              "decode_tps": 27.74,
+              "ttft_s": 7.581
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

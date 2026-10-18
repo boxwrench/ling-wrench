@@ -1,9 +1,12 @@
 # Benchmark harness
 
-Two scripts:
+The harness covers both releases and lives here once.
 
-- `build_inputs.py` builds the public token windows.
-- `run_bench.py` runs the four-cell matrix and writes `results/results.json`.
+- `build_inputs.py` builds the public token windows for the Ling-3.1 EXL3 run.
+- `run_bench.py` runs the Ling-3.1 four-cell matrix and writes
+  `ling-3.1/results/results.json`.
+- `serve_check.py` runs the Ling-3.0 serving check against an OpenAI-compatible
+  endpoint and writes a runtime JSON.
 
 `run_bench.py` is a draft until the R9700 benchmark run replaces it with the
 exact script that produced the published `results.json`. The protocol and output
@@ -65,7 +68,7 @@ CUDA_VISIBLE_DEVICES=0 python bench/run_bench.py \
   --exllamav3 /path/to/exllamav3 \
   --cpu-moe-layers 60 --threads 8 --chunk 2048 \
   --reps 2 --warmup 1 \
-  --out results/results.json
+  --out ling-3.1/results/results.json
 ```
 
 Flags:
@@ -106,10 +109,10 @@ this draft with the exact script.
 
 ## Output
 
-`results/results.json` uses exactly the schema from the benchmark brief:
+`ling-3.1/results/results.json` uses the shared schema:
 
 ```json
-{"schema":"ling31-r9700-bench/1","date":"YYYY-MM-DD",
+{"schema":"ling-r9700-bench/1","kind":"exl3-bench","date":"YYYY-MM-DD",
  "model":{"repo":"...","revision":"...","bpw":2.10,"size_gb":153.6},
  "hardware":{"gpu":"...","cpu":"...","ram":"...","os":"...","kernel":"...","rocm":"...","torch":"...","exllamav3":"..."},
  "config":{"cpu_threads":8,"chunk":2048,"cpu_moe_layers":60,"env":{},"cmd":"..."},
@@ -120,5 +123,27 @@ this draft with the exact script.
  "screen":[],"peak_vram_gb":0,"peak_ram_gb":0}
 ```
 
-`tools/fill_results.py` reads this file and rewrites the marker blocks in the
-README, `results/README.md` and the Hugging Face card draft.
+`tools/fill_results.py --profile 3.1` reads this file and rewrites the marker
+blocks in `ling-3.1/README.md`, `ling-3.1/results/README.md` and an optional
+Hugging Face card draft.
+
+## Ling-3.0 serving check
+
+`serve_check.py` is the one harness for the two INT4 checkpoints. It uses only the
+OpenAI-compatible API plus the server's `/tokenize` and `/detokenize` helpers:
+
+```sh
+python bench/serve_check.py http://127.0.0.1:8000/v1 auto \
+  ling-3.0/results/runtime.json 3
+```
+
+It sends four greedy prompts (factual, thinking-on reasoning, a well-formed tool
+call, short code), then measures prompt and decode throughput at about 1K and
+8K tokens, three runs per point. The prompt is built by tokenizing a public
+text, slicing the ids and detokenizing, so the token counts come from the
+server. No prefix is reused. Use the same runtime, format and launch settings
+for the official INT4 and both re-roundings.
+
+The runtime JSON uses the same `ling-r9700-bench/1` schema with
+`kind: serving-check`. `tools/fill_results.py --profile 3.0` renders its
+`RUNTIME` and `RECEIPT` blocks.
