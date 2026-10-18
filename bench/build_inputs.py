@@ -32,6 +32,7 @@ from pathlib import Path
 
 TARGETS = (8192, 65536)
 MIN_BOOK_TOKENS = 70000
+PG19_REVISION = "c021754c8e01c5b1cc83a1f549c1f97fbbb756b8"
 
 
 def sha256_file(path):
@@ -72,7 +73,7 @@ def encode(tok, text, bos_id):
     return ([bos_id] + ids) if bos_id is not None else ids
 
 
-def pg19_batches(source, split):
+def pg19_batches(source, split, revision=PG19_REVISION):
     """Yield (title, url, text) from a local parquet file/dir or hf://repo@split."""
     import pyarrow.parquet as pq
 
@@ -83,12 +84,12 @@ def pg19_batches(source, split):
         spec = source[len("hf://"):]
         repo, _, hf_split = spec.partition("@")
         hf_split = hf_split or split
-        names = HfApi().list_repo_files(repo, repo_type="dataset")
+        names = HfApi().list_repo_files(repo, repo_type="dataset", revision=revision)
         names = sorted(n for n in names if n.startswith(f"data/{hf_split}-") and n.endswith(".parquet"))
         if not names:
             raise SystemExit(f"no parquet shards for split {hf_split!r} in {repo}")
         for n in names:
-            files.append(hf_hub_download(repo, n, repo_type="dataset"))
+            files.append(hf_hub_download(repo, n, repo_type="dataset", revision=revision))
     else:
         p = Path(source)
         if p.is_dir():
@@ -108,8 +109,8 @@ def pg19_batches(source, split):
                 yield row.get("short_book_title") or "(untitled)", row.get("url") or "", row["text"]
 
 
-def pick_prose(source, split, tok, bos_id, need, min_tokens=MIN_BOOK_TOKENS):
-    for title, url, text in pg19_batches(source, split):
+def pick_prose(source, split, tok, bos_id, need, min_tokens=MIN_BOOK_TOKENS, revision=PG19_REVISION):
+    for title, url, text in pg19_batches(source, split, revision):
         ids = encode(tok, text, bos_id)
         if len(ids) >= min_tokens:
             print(f"prose: {title!r} ({len(ids):,} tokens) -> {need:,}", file=sys.stderr)
@@ -157,6 +158,8 @@ def main():
                     help="local PG-19 parquet/dir, or hf://repo@split (default: emozilla/pg19 "
                          "test; pin revision c021754c8e01c5b1cc83a1f549c1f97fbbb756b8)")
     ap.add_argument("--split", default="test", help="split used when --pg19 has no @split")
+    ap.add_argument("--pg19-revision", default=PG19_REVISION,
+                    help="dataset revision for hf:// downloads (default: pinned E239 revision)")
     ap.add_argument("--code-dir", default="llama.cpp",
                     help="llama.cpp checkout at e467e5b5e5ba43071d6151b3d881deb9300d000e; "
                          "src/*.cpp is used if present")
@@ -168,7 +171,8 @@ def main():
     tok, bos_id = load_tokenizer(args.tokenizer)
 
     need = max(TARGETS)
-    title, url, prose_ids = pick_prose(args.pg19, args.split, tok, bos_id, need, MIN_BOOK_TOKENS)
+    title, url, prose_ids = pick_prose(args.pg19, args.split, tok, bos_id, need, MIN_BOOK_TOKENS,
+                                     args.pg19_revision)
     code_files, code_ids = pick_code(args.code_dir, tok, bos_id, need)
 
     manifest = {

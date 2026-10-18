@@ -8,15 +8,17 @@ The harness covers both releases and lives here once.
 - `serve_check.py` runs the Ling-3.0 serving check against an OpenAI-compatible
   endpoint and writes a runtime JSON.
 
-`run_bench.py` is the script that produced the published `ling-3.1/results/results.json`
+`run_bench.py` produced the 2026-10-18 verification results in `ling-3.1/results/results.json`
 on one R9700 (exllamav3 `0f8cf2c3` plus `exllamav3-rocm-smem.patch`, PyTorch
 2.9.1+rocm7.2.1). Its protocol and output keys match the release schema.
 
 ## Runtime patch
 
-The ROCm 7.2 "lw" PyTorch wheel omits `shared_memory_per_block` from the device
+The measured ROCm 7.2.1 PyTorch wheel omits `shared_memory_per_block` from the device
 properties. exllamav3 `0f8cf2c3` reads it in the Triton MLA decode path, so the
-first decode raises `AttributeError` on a clean checkout. Apply the one-file
+first decode raises `AttributeError` on an unmodified checkout. The public PyTorch
+2.9.1 source also excludes the property under `USE_ROCM`; changing to the
+standard ROCm 6.4 wheel is untested and is not a fix for this lookup. Apply the one-file
 fallback before building:
 
 ```sh
@@ -26,7 +28,8 @@ git apply /path/to/ling-wrench/bench/exllamav3-rocm-smem.patch
 
 The patch sha256 is
 `9744c8e95882f25727d9921346611d37f803297eccbdc0d72241f098fa39c0f2`; the results
-receipt records it as the exllamav3 local diff. On ROCm 7.2 with GCC 13, also
+receipt records the exllamav3 local diff (the runner hashes git output with
+the final newline stripped). The 64 KiB fallback was tested only on gfx1201. On ROCm 7.2 with GCC 13, also
 build with the ROCm clang (`CC=/opt/rocm-7.2.1/llvm/bin/clang
 CXX=/opt/rocm-7.2.1/llvm/bin/clang++`): the extension's AVX2 C++ file includes
 HIP bf16 headers that GCC 13 cannot compile.
@@ -49,7 +52,7 @@ is prepended and special-token-looking strings are encoded as text
 written as little-endian `uint32` files; for these ids that is the same byte
 sequence as the int32 files the reference run hashed. The 8K window is a prefix
 of the 64K window. This repository publishes only the builder and the checksums;
-the token ids are not redistributed.
+the input token ids are not redistributed.
 
 Pinned inputs: PG-19 test (`emozilla/pg19` revision
 `c021754c8e01c5b1cc83a1f549c1f97fbbb756b8`, file
@@ -70,6 +73,7 @@ pip install pyarrow huggingface_hub
 python bench/build_inputs.py \
   --tokenizer "$MODEL_DIR" \
   --pg19 hf://emozilla/pg19@test \
+  --pg19-revision c021754c8e01c5b1cc83a1f549c1f97fbbb756b8 \
   --code-dir /path/to/llama.cpp \
   --out bench/inputs
 ```
@@ -99,13 +103,17 @@ git-ignored. `SHA256SUMS` is the file to commit.
 ## Run
 
 ```sh
-CUDA_VISIBLE_DEVICES=0 python bench/run_bench.py \
+# Use the venv and environment in ling-3.1/README.md's Run it section.
+# The reference R9700 is device 1; use 0 on a single-GPU machine.
+unset PYTHONPATH EXL3_MOE_STREAM_T EXL3_MOE_STREAM_FUSED_T EXL3_MOE_RECON_DET
+CUDA_VISIBLE_DEVICES=1 python bench/run_bench.py \
   --model "$MODEL_DIR" \
   --inputs bench/inputs \
   --exllamav3 /path/to/exllamav3 \
   --contexts 8192,65536 --cpu-moe-layers 60,62 \
   --threads 8 --chunk 4096 \
   --reps 2 --warmup 1 \
+  --revision 008db908a26ac55a2999b29617297287b15d187e \
   --out ling-3.1/results/results.json
 ```
 
@@ -136,18 +144,23 @@ are not loaded.
 ## Protocol
 
 - Prefill tok/s = prompt tokens / time to first token.
-- TTFT = time from job submission to the first generated token, in seconds.
+- TTFT = the engine's `time_prefill`, from the first prefill step to the first
+  generated token, in seconds; queue time is excluded.
 - Decode tok/s = (generated tokens − 1) / time from first to last token, so the
   first token is not counted twice.
 - 256 generated tokens per cell.
 - Report the mean of the two measured repetitions and keep both values in
   `cells[].reps`.
-- Record peak VRAM (allocator) and peak RSS for the process tree.
+- Record peak VRAM (allocator, GiB) and host RAM as MemTotal minus minimum MemAvailable (GiB); process RSS
+  omits most of the CPU-expert worker tier. The runner's host-memory monitor
+  starts after model load; a separate supervisor captured load-time peaks for
+  the verification run.
 
 exllamav3 keeps completed cache pages for prefix reuse. The runner disables that
 (`max_history=0`) and rejects a repetition whose result reports `cached_tokens >
 0`, so every measured pass is the full prompt. The published results state this
-protocol.
+protocol. Generated continuation ids and hashes are retained in the results JSON;
+input id files remain local.
 
 ## Output
 
@@ -157,7 +170,8 @@ protocol.
 {"schema":"ling-r9700-bench/1","kind":"exl3-bench","date":"YYYY-MM-DD",
  "model":{"repo":"...","revision":"...","bpw":2.10,"size_gb":153.6},
  "hardware":{"gpu":"...","cpu":"...","ram":"...","os":"...","kernel":"...","rocm":"...","torch":"...","exllamav3":"..."},
- "config":{"cpu_threads":8,"chunk":2048,"cpu_moe_layers":60,"env":{},"cmd":"..."},
+ "config":{"cpu_threads":8,"chunk":4096,"cpu_moe_layers":null,
+           "cpu_moe_layers_8k":60,"cpu_moe_layers_64k":62,"env":{},"cmd":"..."},
  "inputs":[{"name":"prose-8k","source":"PG-19 ...","tokens":8192,"sha256":"..."}],
  "cells":[{"context":8192,"domain":"prose","prefill_tps":0,"decode_tps":0,"ttft_s":0,
            "gen_tokens":256,"reps":[{"prefill_tps":0,"decode_tps":0,"ttft_s":0}]}],
@@ -168,6 +182,38 @@ protocol.
 `tools/fill_results.py --profile 3.1` reads this file and rewrites the marker
 blocks in `ling-3.1/README.md`, `ling-3.1/results/README.md` and an optional
 Hugging Face card draft.
+
+## Greedy repeatability screen
+
+The four-cell speed table uses the default environment above. To repeat the
+8K-code, one-load screen (two 256-token passes per arm, 16-token warm-up per
+arm, fresh generators), run:
+
+```sh
+unset EXL3_MOE_STREAM_T EXL3_MOE_STREAM_FUSED_T EXL3_MOE_RECON_DET
+CUDA_VISIBLE_DEVICES=1 python bench/check_determinism.py \
+  --model "$MODEL_DIR" --inputs bench/inputs --exllamav3 "$EXLLAMAV3" \
+  --out results/determinism/results.json
+sha256sum results/determinism/det-*.bin
+```
+
+On this R9700 both pairs were identical, with the same 256 generated ids. Their
+little-endian uint32 SHA-256 is
+`16c8be2d5422003fb751fd4cac77fffb9f05782c1af8bfe112ecb9659b68365c`.
+Default output was not identical in several matrix pairs, so this one pair
+does not establish general default determinism.
+
+| Metric | Default | Deterministic | Delta | Default pair spread |
+|---|---:|---:|---:|---:|
+| Prefill tok/s | 348.95 | 249.34 | -28.55% | 0.10% |
+| Decode tok/s | 11.93 | 12.05 | +0.99% | 0.11% |
+
+The deterministic arm applies the upstream controls `EXL3_MOE_STREAM_T=8`,
+`EXL3_MOE_STREAM_FUSED_T=0`, `EXL3_MOE_RECON_DET=1` through their corresponding
+loaded tuning objects and stream states, allowing both arms to share one
+model load. **Not adopted for the speed command:** prefill time increases
+39.95%, above the 3% cost limit and the measured floor. This is an 8K-code
+screen, not a four-cell deterministic speed claim.
 
 ## Ling-3.0 serving check
 

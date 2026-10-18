@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 from datetime import date
 from pathlib import Path
 
@@ -183,8 +184,12 @@ def run_shard(args, context, layers):
     tokenizer = Tokenizer.from_config(config)
     model = Model.from_config(config)
     cache = Cache(model, max_num_tokens=context + 1024, max_batch_size=1, max_history=0)
+    load_start = time.perf_counter()
+    print(json.dumps({"event": "load_start", "context": context, "cpu_moe_layers": layers}), flush=True)
     model.load(device=None, progressbar=False, max_chunk_size=args.chunk, max_output_size=1)
     torch.cuda.synchronize()
+    load_seconds = time.perf_counter() - load_start
+    print(json.dumps({"event": "loaded", "context": context, "load_seconds": load_seconds}), flush=True)
     sampler = ArgmaxSampler()
 
     stop = threading.Event()
@@ -210,10 +215,14 @@ def run_shard(args, context, layers):
         torch.cuda.synchronize()
         final = None
         try:
-            while gen.num_remaining_jobs():
-                for r in gen.iterate():
-                    if r.get("eos"):
-                        final = r
+            with torch.inference_mode():
+                while gen.num_remaining_jobs():
+                    for r in gen.iterate():
+                        if r.get("eos"):
+                            final = r
+            new_ids = job.sequences[0].sequence_ids.torch()[0, ids.shape[1]:].tolist()
+            if len(new_ids) != max_new:
+                raise RuntimeError(f"expected {max_new} generated ids, got {len(new_ids)}")
         finally:
             gen.close()
             del gen, job
@@ -226,13 +235,18 @@ def run_shard(args, context, layers):
         new = int(final["new_tokens"])
         if new != max_new:
             raise RuntimeError(f"expected {max_new} generated tokens, got {new}")
-        if int(final.get("cached_tokens", 0)) != 0:
+        if int(final["cached_tokens"]) != 0:
             raise RuntimeError(f"unexpected prefix reuse: {final['cached_tokens']} cached tokens")
         return {
             "prefill_tps": ids.shape[1] / prefill if prefill > 0 else None,
             "decode_tps": (new - 1) / gen_time if gen_time > 0 and new > 1 else None,
             "ttft_s": prefill,
             "new_tokens": new,
+            "cached_tokens": int(final["cached_tokens"]),
+            "cached_pages": int(final["cached_pages"]),
+            "prompt_tokens": int(final["prompt_tokens"]),
+            "ids_sha256_u32": hashlib.sha256(struct.pack(f"<{len(new_ids)}I", *new_ids)).hexdigest(),
+            "ids": new_ids,
         }
 
     cells = []
@@ -241,7 +255,12 @@ def run_shard(args, context, layers):
             ids = read_ids(r["path"])
             if args.warmup:
                 run_one(ids, WARMUP_TOKENS)
-            reps = [run_one(ids, args.gen_tokens) for _ in range(args.reps)]
+            reps = []
+            for rep in range(args.reps):
+                result = run_one(ids, args.gen_tokens)
+                reps.append(result)
+                print(json.dumps({"event": "rep", "context": context, "domain": r["domain"],
+                                  "rep": rep, **{k: v for k, v in result.items() if k != "ids"}}), flush=True)
             cells.append({
                 "context": r["context"],
                 "domain": r["domain"],
@@ -250,8 +269,7 @@ def run_shard(args, context, layers):
                 "decode_tps": mean([x["decode_tps"] for x in reps]),
                 "ttft_s": mean([x["ttft_s"] for x in reps]),
                 "gen_tokens": args.gen_tokens,
-                "reps": [{"prefill_tps": x["prefill_tps"], "decode_tps": x["decode_tps"],
-                          "ttft_s": x["ttft_s"], "new_tokens": x["new_tokens"]} for x in reps],
+                "reps": reps,
             })
             print(f"{r['context']:>6} {r['domain']:<5} "
                   f"{cells[-1]['prefill_tps']:.1f} prefill tok/s  "
@@ -300,6 +318,7 @@ def run_shard(args, context, layers):
         "screen": [],
         "peak_vram_gb": vram,
         "peak_ram_gb": peak_ram,
+        "load_seconds": load_seconds,
     }
 
 

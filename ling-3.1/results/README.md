@@ -13,14 +13,14 @@ excludes the first token.
 <!-- BENCH:START -->
 | Context | Domain | Prefill tok/s | Decode tok/s | TTFT (s) |
 |---:|---|---:|---:|---:|
-| 8K | prose | 377.7 | 11.98 | 21.70 |
-| 8K | code | 387.5 | 11.95 | 21.10 |
-| 64K | prose | 383.1 | 7.83 | 171.10 |
-| 64K | code | 388.7 | 8.15 | 168.60 |
+| 8K | prose | 346.0 | 11.15 | 23.67 |
+| 8K | code | 343.7 | 11.76 | 23.83 |
+| 64K | prose | 346.3 | 7.86 | 189.23 |
+| 64K | code | 346.0 | 8.00 | 189.44 |
 <!-- BENCH:END -->
 
 The runner records both repetitions per cell in `cells[].reps`, plus peak VRAM
-and peak RSS, the exact command and the input hashes.
+and host RAM (MemTotal minus minimum MemAvailable), the exact command and the input hashes.
 
 ## Quality against the FP8 reference
 
