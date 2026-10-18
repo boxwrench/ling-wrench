@@ -40,3 +40,10 @@ It is not the speed default. The controls are hot-switched in one load, not conf
 The current 3.1 JSON is the quiet rerun, not the earlier transfer-overlapped matrix.
 The 3.0 API harness output needs manual assembly into the release schema; preserve raw files and failures.
 [Community report format](../docs/COMMUNITY_BENCHMARKS.md).
+
+## Explicit single-device loading
+
+`run_bench.py --device cuda:0` selects exllamav3's explicit single-device loader (the visible GPU; with
+`CUDA_VISIBLE_DEVICES=1` that is the R9700 on the reference box). Omit `--device` to keep autosplit. The option is
+passed to each context subprocess and recorded as `config.load_device`. Explicit loading skips autosplit's VRAM budget
+checks, so use a layer count and chunk size measured to fit.

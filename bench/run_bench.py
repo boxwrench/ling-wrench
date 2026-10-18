@@ -186,7 +186,7 @@ def run_shard(args, context, layers):
     cache = Cache(model, max_num_tokens=context + 1024, max_batch_size=1, max_history=0)
     load_start = time.perf_counter()
     print(json.dumps({"event": "load_start", "context": context, "cpu_moe_layers": layers}), flush=True)
-    model.load(device=None, progressbar=False, max_chunk_size=args.chunk, max_output_size=1)
+    model.load(device=args.device, progressbar=False, max_chunk_size=args.chunk, max_output_size=1)
     torch.cuda.synchronize()
     load_seconds = time.perf_counter() - load_start
     print(json.dumps({"event": "loaded", "context": context, "load_seconds": load_seconds}), flush=True)
@@ -287,6 +287,7 @@ def run_shard(args, context, layers):
     vram = torch.cuda.max_memory_reserved() / 1024 ** 3 if torch.cuda.is_available() else None
     cfg = {
         "cpu_threads": args.threads,
+        "load_device": args.device or "autosplit",
         "chunk": args.chunk,
         "cpu_moe_layers": layers,
         "contexts": [context],
@@ -340,6 +341,8 @@ def child_cmd(args, context, layers, out):
            "--size-gb", str(args.size_gb)]
     if args.revision:
         cmd += ["--revision", args.revision]
+    if args.device:
+        cmd += ["--device", args.device]
     return cmd
 
 
@@ -351,6 +354,8 @@ def public_cmd(args, contexts, layers):
            "--threads", str(args.threads), "--chunk", str(args.chunk),
            "--reps", str(args.reps), "--warmup", str(args.warmup),
            "--out", "ling-3.1/results/results.json"]
+    if args.device:
+        cmd += ["--device", args.device]
     return " ".join(cmd)
 
 
@@ -370,6 +375,8 @@ def main():
     ap.add_argument("--cpu-moe-layers", required=True,
                     help="routed-expert layers offloaded to the CPU worker (-mcl): one value for "
                          "all contexts, or one per context in --contexts order (e.g. 60,62)")
+    ap.add_argument("--device", default=None,
+                    help="explicit single device (e.g. cuda:0); omitted uses autosplit")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--chunk", type=int, default=4096, help="maximum prompt chunk (-gcs)")
     ap.add_argument("--gen-tokens", type=int, default=DEFAULT_GEN)
