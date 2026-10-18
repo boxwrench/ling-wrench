@@ -82,8 +82,8 @@ Flags:
 | `--out` | results JSON path |
 
 The runner loads one model, runs an excluded 16-token warm-up on the first cell,
-then each cell twice. Each repetition is a fresh job with the full prompt, so no
-prefix is reused. Sampling is argmax. MTP and any draft model are not loaded.
+then each cell twice. Each repetition is a fresh job with the full prompt, so the
+runner does not reuse a prefix explicitly. Sampling is argmax. MTP and any draft model are not loaded.
 
 ## Protocol
 
