@@ -239,3 +239,14 @@ for the official INT4 and both re-roundings.
 The runtime JSON uses the same `ling-r9700-bench/1` schema with
 `kind: serving-check`. `tools/fill_results.py --profile 3.0` renders its
 `RUNTIME` and `RECEIPT` blocks.
+
+## Explicit single-device loading
+
+`run_bench.py --device cuda:0` selects exllamav3's explicit single-device loader.
+With `CUDA_VISIBLE_DEVICES=1`, this is the visible R9700. Omit `--device` to keep
+using autosplit. The option is passed to each context subprocess and recorded as
+`config.load_device` in the result.
+
+Explicit loading skips autosplit's VRAM budget checks. Use a layer count and chunk
+size qualified for the available memory; the two loaders can have different
+allocation and timing behavior. Warm-up and repetition counts are unchanged.
