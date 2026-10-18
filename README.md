@@ -1,51 +1,64 @@
 # Ling Wrench
 
-> **Status, 2026-10-18: Ling-3.1 speed verified on a clean stack.** The Ling-3.1 numbers now come from the public
-> harness on upstream exllamav3 `0f8cf2c3` plus the ROCm shared-memory patch, re-run on a quiet machine: prefill
-> 346-351 tok/s, decode 12.2-12.3 tok/s at 8K and 7.7 at 64K. The first table (2026-10-17, an older local build)
-> showed 378-389 tok/s prefill; that is not reproduced on this stack and is withdrawn. Prefill speed-ups are being
-> tested next. Ling-3.0 numbers are unchanged; setup guides are being prepared.
+Low-bit quants of inclusionAI's Ling models, with public measurements and a reproduction harness.
+Weighted toward agentic coding and tool use, with a general-text floor.
 
-Wrench is a small family of calibrated low-bit quantizations of inclusionAI's
-Ling-3.0-flash and Ling-3.1-flash. Each release keeps the format and launch
-settings of the model it is derived from, so it can be used as a drop-in
-alternative, and is published with the harness and measurements used to check
-it.
+## How fast is it?
 
-The difference between a Wrench release and a generic re-rounding is the
-calibration content: Wrench weights the calibration set toward agentic coding
-and tool use, with a general-text floor. The release pages report next-token
-agreement with the FP8 model on one fixed corpus; those are not task-accuracy
-results.
+Prefill means reading the prompt; decode means writing the answer. These are measured results, not estimates.
 
-## Releases
+| Model | Machine | Context / text | Prefill tok/s | Decode tok/s | By / version |
+|---|---|---|---:|---:|---|
+| 3.1 EXL3 2.10 bpw | R9700 32 GB; 9800X3D; 192 GB RAM | 8K code | 347.6 | 12.21 | maintainer; exllamav3 `0f8cf2c3` + ROCm patch |
+| 3.1 EXL3 2.10 bpw | same | 64K code | 348.0 | 7.67 | maintainer; same runtime |
 
-| Release | Base model | Format | Size | Weights |
-|---|---|---|---:|---|
-| Ling-3.1-flash EXL3 2.10 bpw | Ling-3.1-flash | EXL3 trellis | 153.6 GB | [boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw](https://huggingface.co/boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw) |
-| Ling-3.0-flash INT4 Wrench | Ling-3.0-flash | compressed-tensors S4/g32 | ~77 GB | [boxwrench/Ling-3.0-flash-int4-wrench](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-wrench) |
-| Ling-3.0-flash INT4 generic | Ling-3.0-flash | compressed-tensors S4/g32 | ~77 GB | [boxwrench/Ling-3.0-flash-int4-generic](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-generic) |
+Linux, ROCm 7.2.1; greedy, 256 generated tokens, no speculation or prefix reuse; two runs after a warm-up.
+Full table, spread and receipt: [Ling-3.1](ling-3.1/README.md).
 
-The Ling-3.0 INT4 releases are drop-in replacements for
-[inclusionAI/Ling-3.0-flash-int4](https://huggingface.co/inclusionAI/Ling-3.0-flash-int4):
-same tensor names, shapes and configuration, with the routed experts re-rounded
-from the FP8 weights. The Ling-3.1 release is an EXL3 quant for exllamav3.
+| Model | Machine | Prompt | Prefill tok/s | Decode tok/s | By / version |
+|---|---|---|---:|---:|---|
+| 3.0 INT4 Wrench | 8060S; Max+ 395; 128 GB unified | 8K | 1083.0 | 27.00 | maintainer; vLLM `0.26.1rc1.dev467+g838616875` |
+| 3.0 INT4 generic | same | 8K | 1089.2 | 27.74 | maintainer; same runtime |
 
-## Pages
+Linux/ROCm; greedy, 64 generated tokens, MTP enabled; three-run medians, nonce per request.
+Ranges and receipt: [Ling-3.0](ling-3.0/README.md). [Add your hardware and version](docs/COMMUNITY_BENCHMARKS.md).
 
-- [`ling-3.1/`](ling-3.1/) - EXL3 2.10 bpw on one 32 GB GPU: speed, receipt,
-  quality and the exact run command.
-- [`ling-3.0/`](ling-3.0/) - the two INT4 releases: quality against the official
-  INT4, and the vLLM serving check.
-- [`bench/`](bench/) - the one harness used for both: 3.1 EXL3 benchmark inputs
-  and runner, and the 3.0 OpenAI-API serving check.
+## Which file?
 
-The LingWrench engine (quantizer and runtime) will be published separately.
+| Model | Format / size | Choose it for | Weights | Page |
+|---|---|---|---|---|
+| Ling-3.1-flash | EXL3 2.10 bpw; 153.6 GB | GPU plus CPU experts in RAM | [HF](https://huggingface.co/boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw) | [3.1](ling-3.1/README.md) |
+| Ling-3.0-flash Wrench | compressed-tensors INT4 | vLLM; official INT4 layout | [HF](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-wrench) | [3.0](ling-3.0/README.md) |
+| Ling-3.0-flash generic | compressed-tensors INT4 | alternate rounding, same runtime | [HF](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-generic) | [3.0](ling-3.0/README.md) |
+
+## What you need
+
+| | Tested setup |
+|---|---|
+| 3.1 | Linux/ROCm; R9700 32 GB; 192 GB host RAM; 153.6 GB weights plus setup space |
+| 3.0 | Linux/ROCm; 8060S with 128 GB unified memory; check HF file sizes before downloading |
+
+Other GPUs, CUDA, and smaller RAM sizes are untested. [Requirements and placement](docs/INSTALL.md).
+
+## Install
+
+**Let your AI set it up.** Paste into your coding agent:
+
+```text
+Set up Ling Wrench on this PC for me: https://github.com/boxwrench/ling-wrench - follow docs/AI_SETUP.md.
+```
+
+**Or do it yourself:** [INSTALL](docs/INSTALL.md).
+
+## Something went wrong?
+
+[TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [Reproduce](docs/REPRODUCE.md) ·
+[Report numbers](docs/COMMUNITY_BENCHMARKS.md) · [Test requests](docs/TEST_REQUESTS.md) ·
+[For agents](AGENTS.md) · [llms.txt](llms.txt)
 
 ## Licence and credits
 
-The scripts and documentation here are MIT; see [LICENSE](LICENSE). The base
-models are MIT-licensed work by inclusionAI. The 3.1 conversion and benchmark use
-[turboderp-org/exllamav3](https://github.com/turboderp-org/exllamav3) (MIT).
-Benchmark inputs are built from PG-19 (DeepMind, Apache-2.0) and llama.cpp (MIT);
-input token ids are not redistributed. Full notices are in [NOTICE](NOTICE).
+Scripts/docs: MIT ([LICENSE](LICENSE)). Base models: inclusionAI (MIT).
+Runtime/converter: [exllamav3](https://github.com/turboderp-org/exllamav3) (MIT); serving: vLLM (Apache-2.0).
+Benchmark text: PG-19 (DeepMind, Apache-2.0), llama.cpp (MIT). [NOTICE](NOTICE).
+The LingWrench engine is published separately.

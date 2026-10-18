@@ -1,56 +1,12 @@
-# Ling-3.0-flash INT4 — Wrench and generic
+# Ling-3.0-flash — Wrench INT4 and generic
 
-Two calibrated INT4 re-roundings of
-[inclusionAI/Ling-3.0-flash-int4](https://huggingface.co/inclusionAI/Ling-3.0-flash-int4),
-about **77 GB** each. They keep the official compressed-tensors S4/g32 layout,
-tensor names, shapes, configuration, tokenizer and chat template, so they are
-drop-in replacements for the official INT4.
+Two compressed-tensors S4/g32 quants of [inclusionAI/Ling-3.0-flash](https://huggingface.co/inclusionAI/Ling-3.0-flash).
+Weights: [Wrench](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-wrench) and
+[generic](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-generic).
+Both keep the official INT4 tensor layout, configuration, tokenizer and chat template; vLLM serves them without conversion.
+Check the selected HF revision's file listing for download size.
 
-- **Wrench:** [boxwrench/Ling-3.0-flash-int4-wrench](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-wrench)
-- **generic:** [boxwrench/Ling-3.0-flash-int4-generic](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-generic)
-
-Part of [boxwrench/ling-wrench](https://github.com/boxwrench/ling-wrench).
-
-## Base model
-
-Ling-3.0-flash is inclusionAI's 124B-total, 5.1B-active hybrid MoE: 35 KDA
-linear-attention layers and 7 gated MLA layers, 512 routed experts with one
-shared expert, and a 256K training context. It is MIT-licensed; see the
-[model card](https://huggingface.co/inclusionAI/Ling-3.0-flash).
-
-## This quant
-
-The 61,440 routed-expert projections in the 40 MoE layers were re-rounded from
-the FP8 checkpoint with activation-calibrated, GPTQ-style error feedback. All
-other tensors are copied byte-for-byte from the official INT4. Wrench used about
-1M calibration tokens weighted toward agentic coding and tool use, with a
-general-text floor; generic used public corpora only.
-
-## Quality
-
-Full-vocabulary KL and next-token top-1 agreement against
-[Ling-3.0-flash-fp8](https://huggingface.co/inclusionAI/Ling-3.0-flash-fp8) on
-a locked **92 x 4096-token corpus**. Lower KL and higher top-1 are better.
-
-| Metric | Official INT4 | Wrench | generic |
-|---|---:|---:|---:|
-| Overall KL ↓ | 0.1402 | **0.1230** | **0.1281** |
-| Overall top-1 agreement ↑ | 92.61% | **93.28%** | **93.00%** |
-| Agentic sessions KL ↓ | 0.2400 | **0.2093** | **0.2208** |
-| Public chat set KL ↓ | 0.0467 | **0.0422** | **0.0411** |
-| wikitext-2 KL ↓ | 0.0286 | **0.0261** | **0.0251** |
-| Expert-route exact agreement ↑ | 47.58% | **51.55%** | **50.48%** |
-
-Scores measure agreement with the FP8 model on one fixed corpus; they are not
-task-accuracy results.
-
-## Serving check
-
-All three checkpoints loaded in vLLM on ROCm with the same format and settings.
-Greedy factual, reasoning, tool-call and short-code checks matched the official
-run. Median throughput is within a few percent of the official INT4; the official
-three-run spread is 0.2-0.3% prefill and 9.4-12.5% decode. One generic 1K
-prefill run was 387 tok/s, visible in the range.
+## Speed
 
 <!-- RUNTIME:START -->
 | Model | Status | Prompt | Prefill tok/s | Decode tok/s | TTFT (s) |
@@ -65,6 +21,11 @@ prefill run was 387 tok/s, visible in the range.
 Median of the runs; brackets are min-max. OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; a random nonce per request, so no prefix reuse. Server flags: `--attention-backend TRITON_MLA --moe-backend triton --speculative-config '{"method":"mtp","num_speculative_tokens":1}' --max-model-len 262144 --gpu-memory-utilization 0.72 --max-num-seqs 6 --max-num-batched-tokens 8192 --enable-chunked-prefill --enable-prefix-caching --mamba-cache-mode align --trust-remote-code`; same flags for all three checkpoints.
 <!-- RUNTIME:END -->
 
+Measured 2026-10-17 on Radeon 8060S / Ryzen AI Max+ 395, 128 GB unified memory,
+Linux/ROCm; vLLM `0.26.1rc1.dev467+g838616875`. This is a particular ROCm build, not a reproducible upstream release pin.
+Prefill means reading the prompt; decode means writing the answer. This API timing protocol differs from the 3.1 engine timings.
+Actual prompt counts are in [runtime.json](results/runtime.json).
+
 <!-- RECEIPT:START -->
 | Item | Value |
 |---|---|
@@ -73,35 +34,34 @@ Median of the runs; brackets are min-max. OpenAI-compatible API; greedy; 64 gene
 | Method | OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; a random nonce per request, so no prefix reuse. Server flags: `--attention-backend TRITON_MLA --moe-backend triton --speculative-config '{"method":"mtp","num_speculative_tokens":1}' --max-model-len 262144 --gpu-memory-utilization 0.72 --max-num-seqs 6 --max-num-batched-tokens 8192 --enable-chunked-prefill --enable-prefix-caching --mamba-cache-mode align --trust-remote-code`; same flags for all three checkpoints. |
 <!-- RECEIPT:END -->
 
+The official same-config range is the comparison floor: keep the full ranges, including the generic short-prompt outlier.
+These are serving checks, not evidence of a general speed advantage. MTP is enabled here; it is disabled in the 3.1 table.
+
+## Quality
+
+No task-accuracy result is provided here. Use your own workloads to compare the checkpoints.
+The serving table checks loading and generation; it does not measure model quality.
+
 ## Run it
 
-Use the same runtime and launch settings as the official INT4. For SGLang (untested by us), use
-inclusionAI's Ling fork and the official card's server command. The checkpoints
-are also served by vLLM with its compressed-tensors INT4 path; no config change
-or conversion is needed.
+[INSTALL](../docs/INSTALL.md#ling-30-int4) contains the vLLM launch and download commands, marked untested where needed.
+Use the same server flags for the official INT4, Wrench and generic.
+SGLang and CUDA are untested. With a coding agent: [AI_SETUP](../docs/AI_SETUP.md).
+Problems: [TROUBLESHOOTING](../docs/TROUBLESHOOTING.md).
 
-```sh
-hf download boxwrench/Ling-3.0-flash-int4-wrench --local-dir ./Ling-3.0-flash-int4-wrench
-```
+## Reproduce
 
-Point `--model-path` / `--model` at that directory. The generic checkpoint uses
-the same command.
+[REPRODUCE](../docs/REPRODUCE.md#ling-30-serving-check) describes the API harness and its output limits.
+Receipt and measured rows: [results/runtime.json](results/runtime.json).
+The published JSON identifies the runtime build but does not provide its install artifact, model revision pins or measured file sizes.
 
-## Reproduce the serving check
+## Limits
 
-`bench/serve_check.py` drives any OpenAI-compatible endpoint. It sends the four
-greedy sanity prompts, then measures prompt and decode throughput at about 1K
-and 8K tokens with three runs per point.
+- Measured on one unified-memory Linux/ROCm machine. Discrete-GPU placement and smaller-memory hosts are untested.
+- The API harness writes per-server raw output; it does not automatically assemble the combined release JSON.
+- No equivalence claim between different vLLM builds, SGLang, or the 3.1 benchmark protocol.
 
-```sh
-python bench/serve_check.py http://127.0.0.1:8000/v1 MODEL OUTPUT.json 3
-```
+## Credits
 
-`bench/README.md` has the full protocol. Results are in
-`ling-3.0/results/runtime.json`.
-
-## Credits and license
-
-- Base model and official INT4: [inclusionAI](https://huggingface.co/inclusionAI), MIT.
-  The upstream notice is reproduced in [NOTICE](../NOTICE).
-- Re-rounding: boxwrench. See [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
+inclusionAI for Ling-3.0-flash and the official INT4 (MIT);
+[vLLM](https://github.com/vllm-project/vllm) (Apache-2.0) for serving. [NOTICE](../NOTICE).
