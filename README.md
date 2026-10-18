@@ -28,7 +28,7 @@ Ranges and receipt: [Ling-3.0](ling-3.0/README.md). [Add your hardware and versi
 | Model | Format / size | Choose it for | Weights | Page |
 |---|---|---|---|---|
 | Ling-3.1-flash | EXL3 2.10 bpw; 153.6 GB | GPU plus CPU experts in RAM | [HF](https://huggingface.co/boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw) | [3.1](ling-3.1/README.md) |
-| Ling-3.0-flash Wrench | compressed-tensors INT4 | vLLM; official INT4 layout | [HF](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-wrench) | [3.0](ling-3.0/README.md) |
+| Ling-3.0-flash Wrench | compressed-tensors INT4 | vLLM; official INT4 layout; KL to FP8 0.123 vs 0.140 (official) | [HF](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-wrench) | [3.0](ling-3.0/README.md) |
 | Ling-3.0-flash generic | compressed-tensors INT4 | alternate rounding, same runtime | [HF](https://huggingface.co/boxwrench/Ling-3.0-flash-int4-generic) | [3.0](ling-3.0/README.md) |
 
 ## What you need
