@@ -4,10 +4,11 @@ An EXL3 trellis quant of [inclusionAI/Ling-3.1-flash](https://huggingface.co/inc
 
 Part of [boxwrench/ling-wrench](https://github.com/boxwrench/ling-wrench).
 
-> **Status, 2026-10-18: public harness verified with corrections.** The table below was re-measured with
+> **Status, 2026-10-18: public harness runs; speed values remain provisional.** The table below was measured with
 > `bench/run_bench.py` on exllamav3 `0f8cf2c3` plus the documented ROCm shared-memory fallback. All four input hashes
-> match the original benchmark. The earlier prefill values did not reproduce within the repeat floor; all speed rows
-> now use this run's values. Decode differences were within the measured floors. This is a patched upstream stack.
+> match the original benchmark; all eight measured passes generated 256 tokens with zero cached tokens. Decode is
+> within the original repeat floors, while prefill is 8–11% lower. A large host file transfer overlapped this run;
+> quiet confirmation is pending before treating the prefill values as reproducible. All speed rows use this run.
 
 ## Base model
 

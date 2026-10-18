@@ -22,6 +22,10 @@ excludes the first token.
 The runner records both repetitions per cell in `cells[].reps`, plus peak VRAM
 and host RAM (MemTotal minus minimum MemAvailable), the exact command and the input hashes.
 
+The 2026-10-18 timing run overlapped a large host file transfer. Prefill values
+remain provisional pending a quiet rerun; input hashes, actual 256-token counts
+and zero cached-token counts were verified.
+
 ## Quality against the FP8 reference
 
 Next-token distribution on 92 x 4K windows. Lower KL and higher top-1 are better.

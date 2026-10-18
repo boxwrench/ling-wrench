@@ -1,9 +1,9 @@
 # Ling Wrench
 
-> **Status, 2026-10-18: early release.** Ling-3.1 verification uses the public harness on exllamav3
-> `0f8cf2c3` plus the documented ROCm shared-memory fallback. All four public input hashes match the original
-> benchmark. Updated speed results and a reproducible setup replace the earlier provisional instructions;
-> the release page records the exact stack. Setup guides are being prepared.
+> **Status, 2026-10-18: early release.** The Ling-3.1 public harness now runs end to end on exllamav3
+> `0f8cf2c3` plus the documented ROCm shared-memory fallback. All four input hashes match. Decode agrees with
+> the earlier repeat floors; prefill is lower, and a host file transfer overlapped the run. Speed values remain
+> provisional until quiet confirmation. The release page has the tested setup; further setup guides are being prepared.
 
 Wrench is a small family of calibrated low-bit quantizations of inclusionAI's
 Ling-3.0-flash and Ling-3.1-flash. Each release keeps the format and launch

@@ -12,6 +12,10 @@ The harness covers both releases and lives here once.
 on one R9700 (exllamav3 `0f8cf2c3` plus `exllamav3-rocm-smem.patch`, PyTorch
 2.9.1+rocm7.2.1). Its protocol and output keys match the release schema.
 
+The timing receipt is provisional: a large host file transfer overlapped the
+matrix, and quiet confirmation is pending. This run verifies the public input
+builder, runner, token counts and zero-prefix-reuse protocol.
+
 ## Runtime patch
 
 The measured ROCm 7.2.1 PyTorch wheel omits `shared_memory_per_block` from the device
