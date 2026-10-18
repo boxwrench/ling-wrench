@@ -1,0 +1,32 @@
+NOTICE
+
+This repository's scripts and documentation are released under the MIT License,
+copyright (c) 2026 boxwrench.
+
+Model weights
+
+The weights published as boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw are a
+quantized derivative of inclusionAI/Ling-3.1-flash. The base model card declares:
+
+    license: mit
+
+and links to the Ling-3.1-flash model page:
+
+    https://huggingface.co/inclusionAI/Ling-3.1-flash
+
+The base model's MIT terms are reproduced in this repository's LICENSE for the
+derivative distribution. The base model is the work of inclusionAI; the
+quantized conversion is the work of boxwrench. No endorsement by inclusionAI is
+implied.
+
+Upstream tools
+
+The conversion recipe and benchmark runner use turboderp-org/exllamav3, which is
+distributed under the MIT License:
+
+    https://github.com/turboderp-org/exllamav3
+
+The EXL3 trellis method builds on QTIP. The benchmark inputs include source text
+from llama.cpp (MIT) and one public-domain book from the PG-19 dataset. Those
+inputs are identified by source and SHA-256 in results/results.json; their
+upstream licenses continue to apply.

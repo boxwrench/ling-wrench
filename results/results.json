@@ -1,0 +1,98 @@
+{
+  "schema": "ling31-r9700-bench/1",
+  "date": null,
+  "model": {
+    "repo": "boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw",
+    "revision": null,
+    "bpw": 2.1,
+    "size_gb": 153.6
+  },
+  "hardware": {
+    "gpu": "AMD Radeon AI PRO R9700 32 GB (gfx1201)",
+    "cpu": "AMD Ryzen 7 9800X3D",
+    "ram": "192 GB DDR5",
+    "os": null,
+    "kernel": null,
+    "rocm": null,
+    "torch": null,
+    "exllamav3": null
+  },
+  "config": {
+    "cpu_threads": null,
+    "chunk": null,
+    "cpu_moe_layers": null,
+    "env": {},
+    "cmd": null
+  },
+  "inputs": [
+    {
+      "name": "prose-8k",
+      "source": null,
+      "tokens": 8192,
+      "sha256": null
+    },
+    {
+      "name": "prose-64k",
+      "source": null,
+      "tokens": 65536,
+      "sha256": null
+    },
+    {
+      "name": "code-8k",
+      "source": null,
+      "tokens": 8192,
+      "sha256": null
+    },
+    {
+      "name": "code-64k",
+      "source": null,
+      "tokens": 65536,
+      "sha256": null
+    }
+  ],
+  "cells": [
+    {
+      "context": 8192,
+      "domain": "prose",
+      "prefill_tps": null,
+      "decode_tps": null,
+      "ttft_s": null,
+      "gen_tokens": 256,
+      "reps": []
+    },
+    {
+      "context": 8192,
+      "domain": "code",
+      "prefill_tps": null,
+      "decode_tps": null,
+      "ttft_s": null,
+      "gen_tokens": 256,
+      "reps": []
+    },
+    {
+      "context": 65536,
+      "domain": "prose",
+      "prefill_tps": null,
+      "decode_tps": null,
+      "ttft_s": null,
+      "gen_tokens": 256,
+      "reps": []
+    },
+    {
+      "context": 65536,
+      "domain": "code",
+      "prefill_tps": null,
+      "decode_tps": null,
+      "ttft_s": null,
+      "gen_tokens": 256,
+      "reps": []
+    }
+  ],
+  "baseline": {
+    "config": {},
+    "cells": []
+  },
+  "screen": [],
+  "peak_vram_gb": null,
+  "peak_ram_gb": null
+}

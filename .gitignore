@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+*.swp
+
+# Generated token inputs (rebuild with bench/build_inputs.py)
+bench/inputs/*.bin
+bench/inputs/*.txt
+bench/inputs/manifest.json
+
+# Scratch
+*.tmp
+*.log

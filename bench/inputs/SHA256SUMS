@@ -1,0 +1,12 @@
+# Placeholder — intentionally no hashes yet.
+#
+# The released benchmark writes the SHA-256 of each little-endian uint32 token
+# file after it builds them with bench/build_inputs.py:
+#
+#   <sha256>  prose-8k.bin
+#   <sha256>  prose-64k.bin
+#   <sha256>  code-8k.bin
+#   <sha256>  code-64k.bin
+#
+# Do not paste hashes from a different corpus. The same values are recorded in
+# results/results.json (inputs[].sha256) and rendered by tools/fill_results.py.
