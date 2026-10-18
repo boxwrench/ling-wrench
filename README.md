@@ -34,9 +34,7 @@ from the FP8 weights. The Ling-3.1 release is an EXL3 quant for exllamav3.
 - [`bench/`](bench/) - the one harness used for both: 3.1 EXL3 benchmark inputs
   and runner, and the 3.0 OpenAI-API serving check.
 
-The quantizer and runtime work lives in the LingWrench engine repository
-([boxwrench/LingWrench-engine](https://github.com/boxwrench/LingWrench-engine);
-public export in preparation).
+The LingWrench engine (quantizer and runtime) will be published separately.
 
 ## Licence and credits
 
