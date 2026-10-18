@@ -123,7 +123,7 @@ python tools/fill_results.py
 python tools/fill_results.py --check
 ```
 
-The runner records the exact command, environment, input hashes, per-repetition timings and peak memory in `results/results.json` (schema `ling31-r9700-bench/1`). `bench/README.md` has the full flag list and the input-selection rules.
+The runner records the exact command, environment, input hashes, per-repetition timings and peak memory in `results/results.json` (schema `ling31-r9700-bench/1`). `bench/README.md` has the full flag list and the input-selection rules. `bench/run_bench.py` is a marked draft until the R9700 run replaces it with the exact script used for the published numbers.
 
 ## Quantization method
 
