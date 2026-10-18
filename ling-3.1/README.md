@@ -10,7 +10,7 @@ Ling-3.1-flash is inclusionAI's 560B-total, ~25B-active hybrid MoE. It has 63 KD
 
 ## This quant
 
-The file is an EXL3 trellis quantization at 2.10 bpw (153.6 GB). It runs on one 32 GB GPU by keeping the routed experts mostly in system RAM and computing them on the CPU. Calibration was weighted toward agentic coding and tool use, with a general-text floor; the module allocation matches turboderp's 2.10 bpw release, so the intended difference is the calibration content.
+The file is an EXL3 trellis quantization at 2.10 bpw (153.6 GB). It runs on one 32 GB GPU by keeping the routed experts mostly in system RAM and computing them on the CPU. Calibration was weighted toward agentic coding and tool use, with a general-text floor; it uses exllamav3's standard 2.10 bpw module allocation (`-b 2.0 -hq 2`), so the intended difference from other files at this size is the calibration content.
 
 ## Speed, one R9700
 

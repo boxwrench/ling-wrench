@@ -37,7 +37,7 @@ a locked **92 x 4096-token corpus**. Lower KL and higher top-1 are better.
 | Overall KL ↓ | 0.1402 | **0.1230** | **0.1281** |
 | Overall top-1 agreement ↑ | 92.61% | **93.28%** | **93.00%** |
 | Agentic sessions KL ↓ | 0.2400 | **0.2093** | **0.2208** |
-| AtomicChat KL ↓ | 0.0467 | **0.0422** | **0.0411** |
+| Public chat set KL ↓ | 0.0467 | **0.0422** | **0.0411** |
 | wikitext-2 KL ↓ | 0.0286 | **0.0261** | **0.0251** |
 | Expert-route exact agreement ↑ | 47.58% | **51.55%** | **50.48%** |
 
