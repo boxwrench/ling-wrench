@@ -95,6 +95,8 @@ CUDA_VISIBLE_DEVICES=0 python examples/chat.py \
 
 `-mcl` is the number of routed-expert layers kept in system RAM and run by the CPU worker; it has to be high enough that the KV/recurrent cache for the target context fits in VRAM. `-mct` is the CPU worker thread count. Drop `-mcl` and `-mct` only if the whole file fits on your card, which it does not on a 32 GB device. For a 64K prompt, verify that the cache allocation succeeds before benchmarking; reduce `-mcl` if it does not.
 
+These are the E216 starting placement values. The benchmark's selected layer count, thread count and chunk size are recorded in `results/results.json` and rendered in the receipt above.
+
 ## Reproduce the benchmark
 
 Build the token inputs once. The script takes the first PG-19 test book with at least 70,000 Ling tokens and a concatenation of llama.cpp `src/*.cpp`, tokenizes both with the Ling tokenizer and writes exactly 8,192- and 65,536-token ID files plus SHA-256 hashes.
