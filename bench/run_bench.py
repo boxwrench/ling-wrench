@@ -216,6 +216,10 @@ def main():
 
     commit, diff = git_state(args.exllamav3)
     hip = getattr(torch.version, "hip", None)
+    cmd = " ".join([Path(sys.argv[0]).name] + sys.argv[1:])
+    for value, token in ((args.model, "$MODEL_DIR"), (args.inputs, "$INPUTS"),
+                         (args.exllamav3, "$EXLLAMAV3")):
+        cmd = cmd.replace(str(Path(value)), token)
     vram = torch.cuda.max_memory_allocated() / 1024 ** 3 if torch.cuda.is_available() else None
     result = {
         "schema": "ling31-r9700-bench/1",
@@ -237,7 +241,7 @@ def main():
             "chunk": args.chunk,
             "cpu_moe_layers": args.cpu_moe_layers,
             "env": env_snapshot(),
-            "cmd": " ".join([Path(sys.argv[0]).name] + sys.argv[1:]),
+            "cmd": cmd,
         },
         "inputs": [{"name": r["name"], "source": r["source"], "tokens": r["tokens"],
                     "sha256": r["sha256"]} for r in rows],
