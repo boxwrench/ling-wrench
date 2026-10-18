@@ -96,6 +96,12 @@ prefix is reused. Sampling is argmax. MTP and any draft model are not loaded.
   `cells[].reps`.
 - Record peak VRAM (allocator) and peak RSS for the process tree.
 
+exllamav3 keeps completed cache pages for prefix reuse. The draft runner submits
+a fresh job for every repetition but does not reset the paged cache; if a strict
+no-prefix-reuse measurement is required, run each cell in a fresh process. The
+published results must state which of the two was used. The R9700 run replaces
+this draft with the exact script.
+
 ## Output
 
 `results/results.json` uses exactly the schema from the benchmark brief:
