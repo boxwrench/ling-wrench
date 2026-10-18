@@ -4,9 +4,20 @@
 Prose: the first book in the PG-19 test split that tokenizes to at least
 70,000 Ling tokens. Code: sorted llama.cpp `src/*.cpp` concatenated in order.
 
-Both are tokenized with the Ling-3.1 tokenizer and cut to exactly 8,192 and
-65,536 ids. The 8K window is the prefix of the 64K window. Token ids are
-written as little-endian uint32 `.bin` files, with a SHA-256 for each file.
+Both are tokenized exactly as the exllamav3 runtime does it: the model BOS
+token is prepended, and strings that look like special tokens (for example
+`[gMASK]`) are encoded as plain text (`encode_special_tokens`). The result is
+cut to exactly 8,192 and 65,536 ids; the 8K window is the prefix of the 64K
+window. Token ids are written as little-endian uint32 `.bin` files, with a
+SHA-256 for each file (identical bytes to the int32 files for these ids).
+
+Pinned sources: PG-19 test (`emozilla/pg19` revision
+c021754c8e01c5b1cc83a1f549c1f97fbbb756b8, file
+`data/test-00000-of-00001-29a571947c0b5ccc.parquet`, sha256
+9aae5ddf035760257458cff08d2575d78a15f84eff867af7a87eff0681b01bfc) and
+llama.cpp `e467e5b5e5ba43071d6151b3d881deb9300d000e` (MIT). Requires
+`tokenizers` and, for a local parquet file, `pyarrow`; the `hf://` form also
+needs `huggingface_hub`.
 
 No private text is read by this script.
 """
@@ -39,11 +50,26 @@ def load_tokenizer(path):
         p = p / "tokenizer.json"
     if not p.is_file():
         raise SystemExit(f"tokenizer.json not found at {p}")
-    return Tokenizer.from_file(str(p))
+    tok = Tokenizer.from_file(str(p))
+    # Match exllamav3: special-token-looking substrings are plain text.
+    tok.encode_special_tokens = True
+
+    bos_id = None
+    cfg = p.parent / "tokenizer_config.json"
+    if cfg.is_file():
+        bos = json.loads(cfg.read_text(encoding="utf-8")).get("bos_token")
+        if isinstance(bos, dict):
+            bos = bos.get("content")
+        if isinstance(bos, str) and bos:
+            bos_id = tok.token_to_id(bos)
+            if bos_id is None:
+                raise SystemExit(f"BOS token {bos!r} is not in {p}")
+    return tok, bos_id
 
 
-def encode(tok, text):
-    return tok.encode(text, add_special_tokens=False).ids
+def encode(tok, text, bos_id):
+    ids = tok.encode(text, add_special_tokens=False).ids
+    return ([bos_id] + ids) if bos_id is not None else ids
 
 
 def pg19_batches(source, split):
@@ -82,30 +108,32 @@ def pg19_batches(source, split):
                 yield row.get("short_book_title") or "(untitled)", row.get("url") or "", row["text"]
 
 
-def pick_prose(source, split, tok, need, min_tokens=MIN_BOOK_TOKENS):
+def pick_prose(source, split, tok, bos_id, need, min_tokens=MIN_BOOK_TOKENS):
     for title, url, text in pg19_batches(source, split):
-        ids = encode(tok, text)
+        ids = encode(tok, text, bos_id)
         if len(ids) >= min_tokens:
             print(f"prose: {title!r} ({len(ids):,} tokens) -> {need:,}", file=sys.stderr)
             return title, url, ids[:need]
     raise SystemExit(f"no PG-19 book in {source} reached {need:,} tokens")
 
 
-def pick_code(code_dir, tok, need):
+def pick_code(code_dir, tok, bos_id, need):
     root = Path(code_dir)
     src = root / "src"
     files = sorted(glob.glob(str((src if src.is_dir() else root) / "*.cpp")))
     if not files:
         raise SystemExit(f"no *.cpp files under {src if src.is_dir() else root}")
-    ids = []
+    # Encode the whole concatenation once, as the benchmark did; per-file
+    # encoding can split bytes differently at the joins.
+    parts = []
     used = []
     for f in files:
-        text = Path(f).read_text(encoding="utf-8", errors="replace")
-        chunk = encode(tok, f"\n// ---- {Path(f).name} ----\n" + text)
-        ids.extend(chunk)
-        used.append({"file": Path(f).name, "tokens": len(chunk)})
-        if len(ids) >= need:
-            break
+        text = f"\n\n// ===== FILE: {Path(f).name} =====\n\n"
+        body = Path(f).read_text(encoding="utf-8", errors="replace")
+        parts.append(text)
+        parts.append(body)
+        used.append({"file": Path(f).name})
+    ids = encode(tok, "".join(parts), bos_id)
     if len(ids) < need:
         raise SystemExit(f"code source reached only {len(ids):,} tokens, need {need:,}")
     print(f"code: {len(used)} files, {len(ids):,} tokens -> {need:,}", file=sys.stderr)
@@ -126,20 +154,22 @@ def main():
     ap.add_argument("--tokenizer", required=True,
                     help="Ling-3.1 model directory or tokenizer.json")
     ap.add_argument("--pg19", default="hf://emozilla/pg19@test",
-                    help="local PG-19 parquet/dir, or hf://repo@split (default: test split)")
+                    help="local PG-19 parquet/dir, or hf://repo@split (default: emozilla/pg19 "
+                         "test; pin revision c021754c8e01c5b1cc83a1f549c1f97fbbb756b8)")
     ap.add_argument("--split", default="test", help="split used when --pg19 has no @split")
     ap.add_argument("--code-dir", default="llama.cpp",
-                    help="llama.cpp checkout; src/*.cpp is used if present")
+                    help="llama.cpp checkout at e467e5b5e5ba43071d6151b3d881deb9300d000e; "
+                         "src/*.cpp is used if present")
     ap.add_argument("--out", default="bench/inputs", help="output directory")
     args = ap.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    tok = load_tokenizer(args.tokenizer)
+    tok, bos_id = load_tokenizer(args.tokenizer)
 
     need = max(TARGETS)
-    title, url, prose_ids = pick_prose(args.pg19, args.split, tok, need, MIN_BOOK_TOKENS)
-    code_files, code_ids = pick_code(args.code_dir, tok, need)
+    title, url, prose_ids = pick_prose(args.pg19, args.split, tok, bos_id, need, MIN_BOOK_TOKENS)
+    code_files, code_ids = pick_code(args.code_dir, tok, bos_id, need)
 
     manifest = {
         "tokenizer": "Ling-3.1 tokenizer.json (from the model snapshot)",

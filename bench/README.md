@@ -8,9 +8,28 @@ The harness covers both releases and lives here once.
 - `serve_check.py` runs the Ling-3.0 serving check against an OpenAI-compatible
   endpoint and writes a runtime JSON.
 
-`run_bench.py` is a draft until the R9700 benchmark run replaces it with the
-exact script that produced the published `results.json`. The protocol and output
-keys match the release schema; the first real run is the shakedown.
+`run_bench.py` is the script that produced the published `ling-3.1/results/results.json`
+on one R9700 (exllamav3 `0f8cf2c3` plus `exllamav3-rocm-smem.patch`, PyTorch
+2.9.1+rocm7.2.1). Its protocol and output keys match the release schema.
+
+## Runtime patch
+
+The ROCm 7.2 "lw" PyTorch wheel omits `shared_memory_per_block` from the device
+properties. exllamav3 `0f8cf2c3` reads it in the Triton MLA decode path, so the
+first decode raises `AttributeError` on a clean checkout. Apply the one-file
+fallback before building:
+
+```sh
+cd /path/to/exllamav3
+git apply /path/to/ling-wrench/bench/exllamav3-rocm-smem.patch
+```
+
+The patch sha256 is
+`9744c8e95882f25727d9921346611d37f803297eccbdc0d72241f098fa39c0f2`; the results
+receipt records it as the exllamav3 local diff. On ROCm 7.2 with GCC 13, also
+build with the ROCm clang (`CC=/opt/rocm-7.2.1/llvm/bin/clang
+CXX=/opt/rocm-7.2.1/llvm/bin/clang++`): the extension's AVX2 C++ file includes
+HIP bf16 headers that GCC 13 cannot compile.
 
 ## Inputs
 
@@ -20,14 +39,32 @@ The inputs are public and reproducible:
   70,000 Ling-3.1 tokens. One coherent book, not stitched articles. PG-19 is
   Apache-2.0 (DeepMind). The title and URL are written to the manifest and the
   SHA-256 is recorded in the results.
-- **Code.** The `src/*.cpp` files of a llama.cpp checkout, sorted by filename,
-  concatenated with a one-line file banner. llama.cpp is MIT-licensed.
+- **Code.** The `src/*.cpp` files of llama.cpp at
+  `e467e5b5e5ba43071d6151b3d881deb9300d000e`, sorted by filename, concatenated
+  with a `// ===== FILE: <name> =====` banner. llama.cpp is MIT-licensed.
 
-Both are tokenized with the Ling-3.1 tokenizer (`tokenizer.json` from the model
-snapshot) with no added special tokens. The first 8,192 ids and the first 65,536
-ids are written as little-endian `uint32` files. The 8K window is a prefix of
-the 64K window. This repository publishes only the builder and the checksums;
+Both are tokenized exactly as the exllamav3 runtime does it: the model BOS token
+is prepended and special-token-looking strings are encoded as text
+(`encode_special_tokens`). The first 8,192 ids and the first 65,536 ids are
+written as little-endian `uint32` files; for these ids that is the same byte
+sequence as the int32 files the reference run hashed. The 8K window is a prefix
+of the 64K window. This repository publishes only the builder and the checksums;
 the token ids are not redistributed.
+
+Pinned inputs: PG-19 test (`emozilla/pg19` revision
+`c021754c8e01c5b1cc83a1f549c1f97fbbb756b8`, file
+`data/test-00000-of-00001-29a571947c0b5ccc.parquet`, sha256
+`9aae5ddf035760257458cff08d2575d78a15f84eff867af7a87eff0681b01bfc`) and
+llama.cpp `e467e5b5e5ba43071d6151b3d881deb9300d000e`. The committed
+`bench/inputs/SHA256SUMS` is the result of that build.
+
+The builder needs `tokenizers` and, for a local parquet file, `pyarrow`; the
+`hf://` form also needs `huggingface_hub` (the exllamav3 requirements do not
+include either parquet dependency):
+
+```sh
+pip install pyarrow huggingface_hub
+```
 
 ```sh
 python bench/build_inputs.py \
@@ -66,7 +103,8 @@ CUDA_VISIBLE_DEVICES=0 python bench/run_bench.py \
   --model "$MODEL_DIR" \
   --inputs bench/inputs \
   --exllamav3 /path/to/exllamav3 \
-  --cpu-moe-layers 60 --threads 8 --chunk 2048 \
+  --contexts 8192,65536 --cpu-moe-layers 60,62 \
+  --threads 8 --chunk 4096 \
   --reps 2 --warmup 1 \
   --out ling-3.1/results/results.json
 ```
@@ -78,17 +116,22 @@ Flags:
 | `--model` | local EXL3 snapshot |
 | `--inputs` | directory from `build_inputs.py` |
 | `--exllamav3` | exllamav3 checkout to import (also `EXLLAMAV3_PATH`) |
-| `--cpu-moe-layers` | routed-expert layers offloaded to the CPU worker (`-mcl`) |
+| `--contexts` | comma-separated contexts (`8192`, `65536`; default both) |
+| `--cpu-moe-layers` | routed-expert layers offloaded to the CPU worker (`-mcl`): one value for all contexts, or one per context (`60,62`) |
 | `--threads` | CPU worker threads (`-mct`) |
-| `--chunk` | maximum prompt chunk (`-gcs`) |
+| `--chunk` | maximum prompt chunk (`-gcs`); the measured value is 4096. **Do not use 8192:** it produces non-finite logits at step 0 on this build |
 | `--gen-tokens` | generated tokens per cell (default 256) |
 | `--reps` | measured repetitions per cell (default 2) |
 | `--warmup` | excluded warm-up passes, 0 or 1 (default 1) |
 | `--out` | results JSON path |
 
-The runner loads one model, runs an excluded 16-token warm-up on the first cell,
-then each cell twice. Each repetition is a fresh job with the full prompt, so the
-runner does not reuse a prefix explicitly. Sampling is argmax. MTP and any draft model are not loaded.
+The runner measures each context in its own process (the CPU-MoE layer
+assignment is fixed at model load), runs an excluded 16-token warm-up **per
+cell**, then each cell twice. Each repetition is a fresh job and a fresh
+generator with the full prompt, `max_history=0` and no recurrent cache, so no
+prefix is reused; the runner fails if the engine reports cached tokens or a
+generated-token count other than 256. Sampling is argmax. MTP and any draft model
+are not loaded.
 
 ## Protocol
 
@@ -101,11 +144,10 @@ runner does not reuse a prefix explicitly. Sampling is argmax. MTP and any draft
   `cells[].reps`.
 - Record peak VRAM (allocator) and peak RSS for the process tree.
 
-exllamav3 keeps completed cache pages for prefix reuse. The draft runner submits
-a fresh job for every repetition but does not reset the paged cache; if a strict
-no-prefix-reuse measurement is required, run each cell in a fresh process. The
-published results must state which of the two was used. The R9700 run replaces
-this draft with the exact script.
+exllamav3 keeps completed cache pages for prefix reuse. The runner disables that
+(`max_history=0`) and rejects a repetition whose result reports `cached_tokens >
+0`, so every measured pass is the full prompt. The published results state this
+protocol.
 
 ## Output
 

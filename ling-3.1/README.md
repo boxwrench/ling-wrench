@@ -49,7 +49,7 @@ Next-token distribution against the FP8 base model on 92 x 4K windows. Lower KL 
 
 ## Runtime techniques
 
-- [exllamav3](https://github.com/turboderp-org/exllamav3) at `0f8cf2c3`, which includes Ling support and the RDNA K = 2 trellis fix ([#519](https://github.com/turboderp-org/exllamav3/pull/519)).
+- [exllamav3](https://github.com/turboderp-org/exllamav3) at `0f8cf2c3`, which includes Ling support and the RDNA K = 2 trellis fix ([#519](https://github.com/turboderp-org/exllamav3/pull/519)), plus a one-file ROCm shared-memory fallback (`bench/exllamav3-rocm-smem.patch`).
 - Routed experts are split between VRAM and system RAM. `-mcl` sets how many expert layers the CPU worker runs; `-mct` sets its thread count.
 - Prompt chunk size (`-gcs`) and thread count (`-mct`) were tuned on this box; the benchmark command and receipt record the values used.
 - MTP is present in the file but disabled for these measurements.
@@ -60,9 +60,18 @@ Next-token distribution against the FP8 base model on 92 x 4K windows. Lower KL 
 git clone https://github.com/turboderp-org/exllamav3.git
 cd exllamav3
 git checkout 0f8cf2c3
+# The ROCm 7.2 "lw" torch wheel omits shared_memory_per_block, which the MLA
+# decode path reads. Apply the one-file fallback published next to this page:
+curl -LO https://raw.githubusercontent.com/boxwrench/ling-wrench/main/bench/exllamav3-rocm-smem.patch
+git apply exllamav3-rocm-smem.patch
 python -m venv .venv && . .venv/bin/activate
-# install the ROCm PyTorch build for your driver first
+# The measured build is PyTorch 2.9.1+rocm7.2.1. Install that ROCm wheel for
+# your driver; a different torch build will change the numbers.
 pip install -r requirements.txt
+# On ROCm 7.2 with GCC 13 the extension's AVX2 C++ file cannot compile the HIP
+# bf16 headers. Build it with the ROCm clang (the first import also JIT-builds):
+export CC=/opt/rocm-7.2.1/llvm/bin/clang CXX=/opt/rocm-7.2.1/llvm/bin/clang++
+pip install -e .
 ```
 
 ```sh
@@ -75,30 +84,54 @@ CUDA_VISIBLE_DEVICES=0 python examples/chat.py \
   -m ./Ling-3.1-flash-exl3-wrench-2.10bpw \
   -mode ling -no_think -temp 0 \
   -mcl 60 -mct 8 \
-  -gcs 2048 -cs 66048
+  -gcs 4096 -cs 66048
 ```
 
-`-mcl` must be high enough that the KV/recurrent cache fits in VRAM at the target context. This is the starting placement; the receipt records the values kept by the benchmark.
+`-mcl 60` is the measured 8K placement; use `-mcl 62` at 64K (`-gcs 4096` in both cases). `-mcl` must be high enough that the KV/recurrent cache fits in VRAM at the target context; 62 is the minimum safe count at 64K on the R9700. Do not raise `-gcs` to 8192: on this build it produces non-finite logits at step 0.
 
 ## Reproduce the benchmark
 
-The inputs are one PG-19 test book (DeepMind, Apache-2.0) and llama.cpp `src/*.cpp` (MIT), tokenized with the Ling tokenizer. Token ids are not redistributed; only the builder and checksums are published.
+The inputs are the PG-19 test file (`emozilla/pg19` revision
+`c021754c8e01c5b1cc83a1f549c1f97fbbb756b8`, `data/test-00000-of-00001-29a571947c0b5ccc.parquet`;
+DeepMind, Apache-2.0) and llama.cpp `src/*.cpp` at
+`e467e5b5e5ba43071d6151b3d881deb9300d000e` (MIT), tokenized with the Ling
+tokenizer. Token ids are not redistributed; only the builder and checksums are
+published.
 
 ```sh
+pip install pyarrow
+git clone https://github.com/ggml-org/llama.cpp
+git -C llama.cpp checkout e467e5b5e5ba43071d6151b3d881deb9300d000e
 python bench/build_inputs.py \
   --tokenizer ./Ling-3.1-flash-exl3-wrench-2.10bpw \
+  --pg19 /path/to/data/test-00000-of-00001-29a571947c0b5ccc.parquet \
+  --code-dir ./llama.cpp \
   --out bench/inputs
 ```
 
+The four `sha256` values must match `bench/inputs/SHA256SUMS`.
+
 ```sh
+export LD_LIBRARY_PATH=/opt/rocm-7.2.1/lib
+export OMP_NUM_THREADS=8
+export PYTORCH_ALLOC_CONF=expandable_segments:True
 CUDA_VISIBLE_DEVICES=0 python bench/run_bench.py \
   --model ./Ling-3.1-flash-exl3-wrench-2.10bpw \
   --inputs bench/inputs \
   --exllamav3 ../exllamav3 \
-  --cpu-moe-layers 60 --threads 8 --chunk 2048 \
+  --contexts 8192,65536 --cpu-moe-layers 60,62 \
+  --threads 8 --chunk 4096 \
   --reps 2 --warmup 1 \
   --out ling-3.1/results/results.json
 ```
+
+This is the exact configuration and stack in the receipt: exllamav3
+`0f8cf2c3` plus the one-file ROCm shared-memory patch
+(`bench/exllamav3-rocm-smem.patch`, sha256
+`9744c8e95882f25727d9921346611d37f803297eccbdc0d72241f098fa39c0f2`); without it
+the first decode raises `AttributeError: shared_memory_per_block`.
+`CUDA_VISIBLE_DEVICES=0` assumes one visible GPU; on the reference box the
+R9700 is HIP device 1 because a 7900 XT is device 0.
 
 ```sh
 python tools/fill_results.py --profile 3.1

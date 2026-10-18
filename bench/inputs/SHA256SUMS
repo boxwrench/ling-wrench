@@ -1,12 +1,9 @@
-# Placeholder — intentionally no hashes yet.
-#
-# The released benchmark writes the SHA-256 of each little-endian uint32 token
-# file after it builds them with bench/build_inputs.py:
-#
-#   <sha256>  prose-8k.bin
-#   <sha256>  prose-64k.bin
-#   <sha256>  code-8k.bin
-#   <sha256>  code-64k.bin
-#
-# Do not paste hashes from a different corpus. The same values are recorded in
-# ling-3.1/results/results.json (inputs[].sha256) and rendered by tools/fill_results.py.
+# Ling-3.1 public benchmark inputs.
+# sha256 of each little-endian uint32 token-id file, built by bench/build_inputs.py.
+# Sources: PG-19 test (emozilla/pg19 @ c021754c8e01c5b1cc83a1f549c1f97fbbb756b8,
+# test-00000-of-00001-29a571947c0b5ccc.parquet) and llama.cpp @ e467e5b5e5ba43071d6151b3d881deb9300d000e.
+# These values are also in ling-3.1/results/results.json (inputs[].sha256).
+48e00d5b6e7619e494eae4c9cf0f16736036b8a437a174d69def6be62e668357  prose-8k.bin
+d853195040460b84f92a5c9af9ac1ed54ad2b650f8e4569a5906e7b518218066  prose-64k.bin
+574ede5dcc88d0a8005d4aaebdeff8ccad4605a94ba20b3d9ece80fec8a168c7  code-8k.bin
+a3df4a659ca2cd31213fdcab8ebd1b68674fef59dbb5dad7294066bf548b4444  code-64k.bin

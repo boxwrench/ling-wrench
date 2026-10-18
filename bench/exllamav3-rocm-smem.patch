@@ -1,0 +1,25 @@
+diff --git a/exllamav3/modules/attention_fn/smem.py b/exllamav3/modules/attention_fn/smem.py
+index 35eff525..09461e4f 100644
+--- a/exllamav3/modules/attention_fn/smem.py
++++ b/exllamav3/modules/attention_fn/smem.py
+@@ -43,11 +43,16 @@ def smem_limit(device) -> int:
+     if lim is None:
+         props = torch.cuda.get_device_properties(idx)
+         lim = getattr(props, "shared_memory_per_block_optin", 0)
+-        if not lim and torch.version.hip:
+-            # ROCm has no opt-in tier (the property is absent): the per-block LDS is the limit
+-            lim = props.shared_memory_per_block
+         if not lim:
+-            lim = 64 * 1024 if props.major < 8 else 96 * 1024
++            # Some ROCm torch builds (the ROCm 7.2 "lw" wheels) omit both the opt-in
++            # tier and shared_memory_per_block from the device properties. AMD LDS is
++            # 64 KB per workgroup on RDNA and CDNA alike.
++            lim = getattr(props, "shared_memory_per_block", 0)
++        if not lim:
++            if torch.version.hip:
++                lim = 64 * 1024
++            else:
++                lim = 64 * 1024 if props.major < 8 else 96 * 1024
+         if _env_limit:
+             lim = min(lim, _env_limit)
+         _limit[idx] = lim
