@@ -158,6 +158,25 @@ the first decode raises `AttributeError: shared_memory_per_block`.
 `CUDA_VISIBLE_DEVICES=1` selects the R9700 on the reference box; use 0 on a
 single-GPU machine. The 7900 XT stays unused.
 
+### Explicit device and faster prefill
+
+`--device cuda:0` selects exllamav3's explicit single-device loader for the
+visible R9700 instead of autosplit (also documented in `bench/README.md`). It is
+passed to each context subprocess and recorded as `config.load_device`. On the
+reference box it removed autosplit's VRAM-budget path and, with
+`EXL3_MOE_STREAM_T=6`, measured 8K 385.9/387.5 tok/s (prose/code) and 64K
+399.3/394.7, against 351.2/347.6 and 345.8/348.0 for the command above; decode
+was unchanged. Explicit loading skips autosplit's budget checks, so the chunk and
+layer count must fit.
+
+The same settings with `--chunk 8192` and `--cpu-moe-layers 62` measured
+486.6/498.7 at 8K, 490.3 at 16K code and 476.5/476.4 at 64K, with decode
+12.02/12.07 (8K) and 7.86/7.64 (64K). Six-window exact-KL checks against FP8
+at 60 layers / chunk 4096 and 62 layers / chunk 8192 put both regroupings inside
+the same-config repeat floor. These are local verification numbers: the release
+receipt above remains the autosplit/chunk-4096 matrix until the owner regenerates
+it.
+
 ```sh
 python tools/fill_results.py --profile 3.1
 python tools/fill_results.py --profile 3.1 --check
