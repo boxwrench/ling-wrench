@@ -1,39 +1,30 @@
 {
   "schema": "ling31-wrench-quality/1",
   "date": "2026-10-17",
-  "status": "pending-noise-floor",
+  "status": "final",
   "reference": "inclusionAI/Ling-3.1-flash FP8",
   "corpus": "locked 92 x 4096-token windows",
-  "noise_floor": null,
-  "verdict": null,
+  "noise_floor": 0.0,
+  "verdict": "Mixed result; neither file is better overall. By KL, Wrench is 4.1% closer to the FP8 model (95% CI -0.052 to -0.027), all of it on the agentic-coding windows; on general text the other quant is slightly closer. The other quant also gives the actual next token higher probability on six full-vocabulary windows (NLL 0.085 lower, 6/6). Deterministic scorer (identical repeats). KL is not task accuracy.",
   "candidates": [
     {
       "name": "Wrench EXL3 2.10 bpw",
       "size_gb": 153.6,
-      "kl_top64": 0.9247,
+      "kl_top64": 0.9224,
       "exact_kl": 1.1611,
-      "kl_pred": 0.130,
+      "kl_pred": 0.13,
       "top1_pct": 77.99,
-      "dnll_exact": -0.022
+      "dnll_exact": -0.0004
     },
     {
-      "name": "turboderp EXL3 2.10 bpw",
+      "name": "Best other public quant at this size (as of 2026-10-18)",
       "size_gb": 153.6,
-      "kl_top64": 0.9606,
+      "kl_top64": 0.9616,
       "exact_kl": 1.1866,
-      "kl_pred": 0.130,
-      "top1_pct": 77.70,
-      "dnll_exact": -0.092
-    },
-    {
-      "name": "AtomicChat AD-IQ2_XXS",
-      "size_gb": 174.1,
-      "kl_top64": 1.0709,
-      "exact_kl": 1.3299,
-      "kl_pred": 0.176,
-      "top1_pct": 75.68,
-      "dnll_exact": -0.062
+      "kl_pred": 0.13,
+      "top1_pct": 77.66,
+      "dnll_exact": -0.0852
     }
   ],
-  "notes": "Single-run values. The same-configuration repeat noise floor is still being measured."
+  "notes": "E236 deterministic config: EXL3_MOE_STREAM_T=8 EXL3_MOE_STREAM_FUSED_T=0 EXL3_MOE_RECON_DET=1."
 }

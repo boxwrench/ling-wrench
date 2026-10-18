@@ -75,7 +75,7 @@ Median of the runs; brackets are min-max. OpenAI-compatible API; greedy; 64 gene
 
 ## Run it
 
-Use the same runtime and launch settings as the official INT4. For SGLang, use
+Use the same runtime and launch settings as the official INT4. For SGLang (untested by us), use
 inclusionAI's Ling fork and the official card's server command. The checkpoints
 are also served by vLLM with its compressed-tensors INT4 path; no config change
 or conversion is needed.

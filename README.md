@@ -1,5 +1,10 @@
 # Ling Wrench
 
+> **Status, 2026-10-18: early release.** The Ling-3.0 numbers are final. The Ling-3.1 speed numbers were measured on
+> 2026-10-17 with our own run script on a locally patched exllamav3 build. Today we re-run them on clean upstream
+> exllamav3 with the public harness in `bench/`, add a quality comparison with bartowski's IQ2_XXS GGUF, and add setup
+> guides (including one for coding agents). Expect updates here later today.
+
 Wrench is a small family of calibrated low-bit quantizations of inclusionAI's
 Ling-3.0-flash and Ling-3.1-flash. Each release keeps the format and launch
 settings of the model it is derived from, so it can be used as a drop-in

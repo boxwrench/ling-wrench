@@ -4,6 +4,10 @@ An EXL3 trellis quant of [inclusionAI/Ling-3.1-flash](https://huggingface.co/inc
 
 Part of [boxwrench/ling-wrench](https://github.com/boxwrench/ling-wrench).
 
+> **Status, 2026-10-18: provisional numbers.** The speed table below was measured on 2026-10-17 with our own run script on
+> exllamav3 `bd4da327` plus a local patch (the RDNA K = 2 fix, since merged upstream). A re-run on clean upstream exllamav3
+> with the public harness is in progress today; this page will be updated with its results.
+
 ## Base model
 
 Ling-3.1-flash is inclusionAI's 560B-total, ~25B-active hybrid MoE. It has 63 KDA linear-attention layers and 9 gated MLA layers, an MTP head, and a 1M-token context window. It is MIT-licensed; see the [model card](https://huggingface.co/inclusionAI/Ling-3.1-flash).
@@ -40,11 +44,10 @@ Next-token distribution against the FP8 base model on 92 x 4K windows. Lower KL 
 <!-- QUALITY:START -->
 | Candidate | Size | KL top-64 | Top-1 |
 |---|---:|---:|---:|
-| Wrench EXL3 2.10 bpw | 153.6 GB | 0.925 | 77.99 % |
-| turboderp EXL3 2.10 bpw | 153.6 GB | 0.961 | 77.70 % |
-| AtomicChat AD-IQ2_XXS | 174.1 GB | 1.071 | 75.68 % |
+| Wrench EXL3 2.10 bpw | 153.6 GB | 0.922 | 77.99 % |
+| Best other public quant at this size (as of 2026-10-18) | 153.6 GB | 0.962 | 77.66 % |
 
-**Provisional.** Single runs; KL is not task accuracy. The same-config repeat floor is still being measured.
+**Verdict.** Mixed result; neither file is better overall. By KL, Wrench is 4.1% closer to the FP8 model (95% CI -0.052 to -0.027), all of it on the agentic-coding windows; on general text the other quant is slightly closer. The other quant also gives the actual next token higher probability on six full-vocabulary windows (NLL 0.085 lower, 6/6). Deterministic scorer (identical repeats). KL is not task accuracy. Same-config repeat floor: 0.0000.
 <!-- QUALITY:END -->
 
 ## Runtime techniques
@@ -138,7 +141,7 @@ python tools/fill_results.py --profile 3.1
 python tools/fill_results.py --profile 3.1 --check
 ```
 
-`ling-3.1/results/results.json` records the command, environment, input hashes, timings and peak memory. `bench/README.md` has the full flag list and input-selection rules.
+The public runner is being checked end to end today (it takes one `--cpu-moe-layers` value; the 64K cells used 62). `ling-3.1/results/results.json` records the command, environment, input hashes, timings and peak memory. `bench/README.md` has the full flag list and input-selection rules.
 
 ## Credits and license
 

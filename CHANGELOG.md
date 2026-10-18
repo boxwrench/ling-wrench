@@ -1,3 +1,11 @@
+# v0.1 — 2026-10-18 (early public release)
+
+- Ling-3.1: R9700 speed table filled (measured 2026-10-17, provisional until today's clean-stack re-run).
+- Ling-3.1 quality: deterministic scorer (identical repeats); compared with the best other public quant at this size.
+- Ling-3.0: serving receipt lists the full vLLM server flags.
+- Run commands use chunk 4096 (the measured setting).
+- Coming today: clean-stack re-run with the public harness, a bartowski IQ2_XXS comparison, setup guides.
+
 # v0 — 2026-10-17
 
 - Unified the Ling-3.1 EXL3 and Ling-3.0 INT4 release pages in one repository.
