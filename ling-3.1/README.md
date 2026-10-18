@@ -47,7 +47,7 @@ Next-token distribution against the FP8 base model on 92 x 4K windows. Lower KL 
 | Wrench EXL3 2.10 bpw | 153.6 GB | 0.922 | 77.99 % |
 | Best other public quant at this size (as of 2026-10-18) | 153.6 GB | 0.962 | 77.66 % |
 
-**Verdict.** Deterministic scorer, so repeats are identical. Wrench is 4.1% closer to the FP8 model overall (95% CI -0.052 to -0.027 KL), from the agentic-coding windows. On general text the other quant is slightly closer, and it predicts the actual next token better on six full-vocabulary windows (NLL 0.085 lower). KL is not task accuracy. Same-config repeat floor: 0.0000.
+**Verdict.** Mixed result; neither file is better overall. By KL, Wrench is 4.1% closer to the FP8 model (95% CI -0.052 to -0.027), all of it on the agentic-coding windows; on general text the other quant is slightly closer. The other quant also gives the actual next token higher probability on six full-vocabulary windows (NLL 0.085 lower, 6/6). Deterministic scorer (identical repeats). KL is not task accuracy. Same-config repeat floor: 0.0000.
 <!-- QUALITY:END -->
 
 ## Runtime techniques
