@@ -82,10 +82,10 @@ def pg19_batches(source, split):
                 yield row.get("short_book_title") or "(untitled)", row.get("url") or "", row["text"]
 
 
-def pick_prose(source, split, tok, need):
+def pick_prose(source, split, tok, need, min_tokens=MIN_BOOK_TOKENS):
     for title, url, text in pg19_batches(source, split):
         ids = encode(tok, text)
-        if len(ids) >= need:
+        if len(ids) >= min_tokens:
             print(f"prose: {title!r} ({len(ids):,} tokens) -> {need:,}", file=sys.stderr)
             return title, url, ids[:need]
     raise SystemExit(f"no PG-19 book in {source} reached {need:,} tokens")
@@ -138,7 +138,7 @@ def main():
     tok = load_tokenizer(args.tokenizer)
 
     need = max(TARGETS)
-    title, url, prose_ids = pick_prose(args.pg19, args.split, tok, need)
+    title, url, prose_ids = pick_prose(args.pg19, args.split, tok, need, MIN_BOOK_TOKENS)
     code_files, code_ids = pick_code(args.code_dir, tok, need)
 
     manifest = {
