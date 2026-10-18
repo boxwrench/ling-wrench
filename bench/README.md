@@ -14,15 +14,17 @@ keys match the release schema; the first real run is the shakedown.
 The inputs are public and reproducible:
 
 - **Prose.** The first book in the PG-19 test split that tokenizes to at least
-  70,000 Ling-3.1 tokens. One coherent book, not stitched articles. The title and
-  URL are written to the manifest and the SHA-256 is recorded in the results.
+  70,000 Ling-3.1 tokens. One coherent book, not stitched articles. PG-19 is
+  Apache-2.0 (DeepMind). The title and URL are written to the manifest and the
+  SHA-256 is recorded in the results.
 - **Code.** The `src/*.cpp` files of a llama.cpp checkout, sorted by filename,
   concatenated with a one-line file banner. llama.cpp is MIT-licensed.
 
 Both are tokenized with the Ling-3.1 tokenizer (`tokenizer.json` from the model
 snapshot) with no added special tokens. The first 8,192 ids and the first 65,536
 ids are written as little-endian `uint32` files. The 8K window is a prefix of
-the 64K window.
+the 64K window. This repository publishes only the builder and the checksums;
+the token ids are not redistributed.
 
 ```sh
 python bench/build_inputs.py \

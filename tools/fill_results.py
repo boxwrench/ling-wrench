@@ -73,29 +73,21 @@ def render_bench(res):
 def render_receipt(res):
     hw = res.get("hardware") or {}
     cfg = res.get("config") or {}
-    model = res.get("model") or {}
     layers = cfg.get("cpu_moe_layers")
     threads = cfg.get("cpu_threads")
     chunk = cfg.get("chunk")
     cfg_text = " / ".join(fmt_int(x) if x is not None else "TBD" for x in (layers, threads, chunk))
     env = cfg.get("env") or {}
-    env_text = ", ".join(f"`{k}={v}`" for k, v in sorted(env.items())) if env else "none recorded"
+    env_text = ", ".join(f"`{k}={v}`" for k, v in sorted(env.items())) if env else "none"
     vram = fmt(res.get("peak_vram_gb"), 1, " GB")
     ram = fmt(res.get("peak_ram_gb"), 1, " GB")
     rows = [
-        ("GPU", hw.get("gpu") or "TBD"),
-        ("CPU", hw.get("cpu") or "TBD"),
-        ("RAM", hw.get("ram") or "TBD"),
-        ("OS", hw.get("os") or "TBD"),
-        ("Kernel", hw.get("kernel") or "TBD"),
-        ("ROCm", hw.get("rocm") or "TBD"),
-        ("PyTorch", hw.get("torch") or "TBD"),
-        ("exllamav3", hw.get("exllamav3") or "TBD"),
-        ("Model revision", model.get("revision") or "TBD"),
-        ("CPU-MoE layers / threads / chunk", cfg_text),
-        ("Env", env_text),
-        ("Command", f"`{cfg['cmd']}`" if cfg.get("cmd") else "TBD"),
-        ("Peak VRAM / RAM", f"{vram} / {ram}"),
+        ("Hardware", f"{hw.get('gpu') or 'TBD'}; {hw.get('cpu') or 'TBD'}; {hw.get('ram') or 'TBD'}"),
+        ("Software", f"{hw.get('os') or 'TBD'}; kernel {hw.get('kernel') or 'TBD'}; "
+                     f"ROCm {hw.get('rocm') or 'TBD'}; PyTorch {hw.get('torch') or 'TBD'}; "
+                     f"exllamav3 {hw.get('exllamav3') or 'TBD'}"),
+        ("Run", f"CPU-MoE layers / threads / chunk {cfg_text}; env {env_text}; "
+                f"peak VRAM / RAM {vram} / {ram}"),
     ]
     lines = ["| Item | Value |", "|---|---|"]
     lines += [f"| {k} | {v} |" for k, v in rows]
@@ -106,24 +98,21 @@ def render_quality(q):
     if not q:
         return None
     lines = [
-        "| Candidate | Size | KL top-64 | Exact KL | KL_pred | Top-1 | Exact dNLL |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Candidate | Size | KL top-64 | Top-1 |",
+        "|---|---:|---:|---:|",
     ]
     for c in q.get("candidates") or []:
         lines.append(
             f"| {c.get('name') or 'TBD'} | {fmt(c.get('size_gb'), 1, ' GB')} | "
-            f"{fmt(c.get('kl_top64'), 3)} | {fmt(c.get('exact_kl'), 3)} | "
-            f"{fmt(c.get('kl_pred'), 3)} | {fmt(c.get('top1_pct'), 2, ' %')} | "
-            f"{fmt(c.get('dnll_exact'), 3)} |"
+            f"{fmt(c.get('kl_top64'), 3)} | {fmt(c.get('top1_pct'), 2, ' %')} |"
         )
     status = (q.get("status") or "").lower()
     verdict = q.get("verdict")
     if verdict and status in ("final", "complete", "done"):
         note = f"**Verdict.** {verdict}"
     else:
-        note = ("**Verdict pending a noise-floor check.** The numbers above are single-run "
-                "rankings; the same-configuration repeat noise floor is still being measured. "
-                "Treat the ordering as provisional until it is reported.")
+        note = ("**Provisional.** Single runs; KL is not task accuracy. The same-config "
+                "repeat floor is still being measured.")
     floor = q.get("noise_floor")
     if floor is not None:
         note += f" Same-config repeat floor: {fmt(floor, 4)}."
