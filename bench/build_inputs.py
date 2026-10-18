@@ -142,7 +142,7 @@ def main():
     code_files, code_ids = pick_code(args.code_dir, tok, need)
 
     manifest = {
-        "tokenizer": str(args.tokenizer),
+        "tokenizer": "Ling-3.1 tokenizer.json (from the model snapshot)",
         "targets": list(TARGETS),
         "prose": {"source": "PG-19", "split": args.split, "title": title, "url": url},
         "code": {"source": "llama.cpp", "license": "MIT", "files": code_files},
