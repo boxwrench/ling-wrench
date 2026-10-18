@@ -4,6 +4,10 @@ An EXL3 trellis quant of [inclusionAI/Ling-3.1-flash](https://huggingface.co/inc
 
 Part of [boxwrench/ling-wrench](https://github.com/boxwrench/ling-wrench).
 
+> **Status, 2026-10-18: provisional numbers.** The speed table below was measured on 2026-10-17 with our own run script on
+> exllamav3 `bd4da327` plus a local patch (the RDNA K = 2 fix, since merged upstream). A re-run on clean upstream exllamav3
+> with the public harness is in progress today; this page will be updated with its results.
+
 ## Base model
 
 Ling-3.1-flash is inclusionAI's 560B-total, ~25B-active hybrid MoE. It has 63 KDA linear-attention layers and 9 gated MLA layers, an MTP head, and a 1M-token context window. It is MIT-licensed; see the [model card](https://huggingface.co/inclusionAI/Ling-3.1-flash).
@@ -74,10 +78,10 @@ CUDA_VISIBLE_DEVICES=0 python examples/chat.py \
   -m ./Ling-3.1-flash-exl3-wrench-2.10bpw \
   -mode ling -no_think -temp 0 \
   -mcl 60 -mct 8 \
-  -gcs 2048 -cs 66048
+  -gcs 4096 -cs 66048
 ```
 
-`-mcl` must be high enough that the KV/recurrent cache fits in VRAM at the target context. This is the starting placement; the receipt records the values kept by the benchmark.
+`-mcl` must be high enough that the KV/recurrent cache fits in VRAM at the target context: 60 was measured at 8K and 62 at 64K on a 32 GB card. `-gcs 8192` gave non-finite logits on this card; use 4096.
 
 ## Reproduce the benchmark
 
@@ -94,7 +98,7 @@ CUDA_VISIBLE_DEVICES=0 python bench/run_bench.py \
   --model ./Ling-3.1-flash-exl3-wrench-2.10bpw \
   --inputs bench/inputs \
   --exllamav3 ../exllamav3 \
-  --cpu-moe-layers 60 --threads 8 --chunk 2048 \
+  --cpu-moe-layers 60 --threads 8 --chunk 4096 \
   --reps 2 --warmup 1 \
   --out ling-3.1/results/results.json
 ```
@@ -104,7 +108,7 @@ python tools/fill_results.py --profile 3.1
 python tools/fill_results.py --profile 3.1 --check
 ```
 
-`ling-3.1/results/results.json` records the command, environment, input hashes, timings and peak memory. `bench/README.md` has the full flag list and input-selection rules.
+The public runner is being checked end to end today (it takes one `--cpu-moe-layers` value; the 64K cells used 62). `ling-3.1/results/results.json` records the command, environment, input hashes, timings and peak memory. `bench/README.md` has the full flag list and input-selection rules.
 
 ## Credits and license
 

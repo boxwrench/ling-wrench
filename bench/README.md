@@ -66,7 +66,7 @@ CUDA_VISIBLE_DEVICES=0 python bench/run_bench.py \
   --model "$MODEL_DIR" \
   --inputs bench/inputs \
   --exllamav3 /path/to/exllamav3 \
-  --cpu-moe-layers 60 --threads 8 --chunk 2048 \
+  --cpu-moe-layers 60 --threads 8 --chunk 4096 \
   --reps 2 --warmup 1 \
   --out ling-3.1/results/results.json
 ```
