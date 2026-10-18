@@ -22,6 +22,7 @@ from pathlib import Path
 
 SCHEMA = "ling-r9700-bench/1"
 QUALITY_SCHEMA = "ling31-wrench-quality/1"
+SCHEMA_ALIASES = {"ling31-r9700-bench/1": SCHEMA}  # name the 3.1 benchmark brief wrote
 BLOCKS = {
     "3.1": ("BENCH", "RECEIPT", "QUALITY"),
     "3.0": ("RUNTIME", "RECEIPT"),
@@ -86,9 +87,12 @@ def render_receipt(res):
     hw = res.get("hardware") or {}
     cfg = res.get("config") or {}
     layers = cfg.get("cpu_moe_layers")
+    if cfg.get("cpu_moe_layers_8k") is not None and cfg.get("cpu_moe_layers_64k") is not None:
+        layers = f"{cfg['cpu_moe_layers_8k']} (8K) or {cfg['cpu_moe_layers_64k']} (64K)"
     threads = cfg.get("cpu_threads")
     chunk = cfg.get("chunk")
-    cfg_text = " / ".join(fmt_int(x) if x is not None else "TBD" for x in (layers, threads, chunk))
+    cfg_text = " / ".join(x if isinstance(x, str) else fmt_int(x) if x is not None else "TBD"
+                          for x in (layers, threads, chunk))
     env = cfg.get("env") or {}
     env_text = ", ".join(f"`{k}={v}`" for k, v in sorted(env.items())) if env else "none"
     vram = fmt(res.get("peak_vram_gb"), 1, " GB")
@@ -223,7 +227,7 @@ def load_json(path, schema):
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except Exception as e:
         raise SystemExit(f"cannot read {path}: {e}")
-    if data.get("schema") != schema:
+    if data.get("schema") != schema and SCHEMA_ALIASES.get(data.get("schema")) != schema:
         raise SystemExit(f"{path}: expected schema {schema!r}, got {data.get('schema')!r}")
     return data
 

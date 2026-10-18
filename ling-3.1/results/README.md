@@ -13,10 +13,10 @@ excludes the first token.
 <!-- BENCH:START -->
 | Context | Domain | Prefill tok/s | Decode tok/s | TTFT (s) |
 |---:|---|---:|---:|---:|
-| 8K | prose | TBD | TBD | TBD |
-| 8K | code | TBD | TBD | TBD |
-| 64K | prose | TBD | TBD | TBD |
-| 64K | code | TBD | TBD | TBD |
+| 8K | prose | 377.7 | 11.98 | 21.70 |
+| 8K | code | 387.5 | 11.95 | 21.10 |
+| 64K | prose | 383.1 | 7.83 | 171.10 |
+| 64K | code | 388.7 | 8.15 | 168.60 |
 <!-- BENCH:END -->
 
 The runner records both repetitions per cell in `cells[].reps`, plus peak VRAM

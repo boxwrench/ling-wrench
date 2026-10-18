@@ -19,18 +19,18 @@ Raw continuation, greedy, 256 generated tokens, no speculation and no prefix reu
 <!-- BENCH:START -->
 | Context | Domain | Prefill tok/s | Decode tok/s | TTFT (s) |
 |---:|---|---:|---:|---:|
-| 8K | prose | TBD | TBD | TBD |
-| 8K | code | TBD | TBD | TBD |
-| 64K | prose | TBD | TBD | TBD |
-| 64K | code | TBD | TBD | TBD |
+| 8K | prose | 377.7 | 11.98 | 21.70 |
+| 8K | code | 387.5 | 11.95 | 21.10 |
+| 64K | prose | 383.1 | 7.83 | 171.10 |
+| 64K | code | 388.7 | 8.15 | 168.60 |
 <!-- BENCH:END -->
 
 <!-- RECEIPT:START -->
 | Item | Value |
 |---|---|
 | Hardware | AMD Radeon AI PRO R9700 32 GB (gfx1201); AMD Ryzen 7 9800X3D; 192 GB DDR5 |
-| Software | TBD; kernel TBD; ROCm TBD; PyTorch TBD; exllamav3 TBD |
-| Run | CPU-MoE layers / threads / chunk TBD / TBD / TBD; env none; peak VRAM / RAM TBD / TBD |
+| Software | Ubuntu 24.04.5 LTS; kernel 7.0.0-28-generic; ROCm 7.2.1; PyTorch 2.9.1+rocm7.2.1.gitff65f5bc; exllamav3 bd4da327a820e3af602b9131c54a41a5736c33ae (+local diff sha256 f2c2c3fd0e625029c22a1bae201d4f2a8ae43b76e53804413f7592803b208547) |
+| Run | CPU-MoE layers / threads / chunk 60 (8K) or 62 (64K) / 8 / 4,096; env `LD_LIBRARY_PATH=/opt/rocm-7.2.1/lib`, `OMP_NUM_THREADS=8`, `PYTORCH_ALLOC_CONF=expandable_segments:True`; peak VRAM / RAM 31.1 GB / 128.6 GB |
 <!-- RECEIPT:END -->
 
 ## Quality
