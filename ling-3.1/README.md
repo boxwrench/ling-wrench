@@ -63,6 +63,7 @@ Next-token distribution against the FP8 base model on 92 x 4K windows. Lower KL 
 git clone https://github.com/turboderp-org/exllamav3.git
 cd exllamav3
 git checkout 0f8cf2c3
+git apply /path/to/ling-wrench/bench/exllamav3-rocm-smem.patch   # ROCm, see the known issue below
 python -m venv .venv && . .venv/bin/activate
 # install the ROCm PyTorch build for your driver first
 pip install -r requirements.txt
@@ -80,6 +81,8 @@ CUDA_VISIBLE_DEVICES=0 python examples/chat.py \
   -mcl 60 -mct 8 \
   -gcs 4096 -cs 66048
 ```
+
+**Known issue (2026-10-18):** with PyTorch 2.9.1 on ROCm, exllamav3 `0f8cf2c3` (and current upstream) stops at the first decode with `AttributeError: ... has no attribute 'shared_memory_per_block'`. Apply [`bench/exllamav3-rocm-smem.patch`](../bench/exllamav3-rocm-smem.patch) after the checkout, as above. It only changes how the GPU shared-memory limit is looked up (64 KB fallback on ROCm); the numbers on this page were measured with it.
 
 `-mcl` must be high enough that the KV/recurrent cache fits in VRAM at the target context: 60 was measured at 8K and 62 at 64K on a 32 GB card. `-gcs 8192` gave non-finite logits on this card; use 4096.
 

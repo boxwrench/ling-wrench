@@ -1,3 +1,8 @@
+# v0.1.1 — 2026-10-18
+
+- Known issue: exllamav3 on ROCm with PyTorch 2.9.1 raises `AttributeError` (`shared_memory_per_block`) at the first decode.
+  Added `bench/exllamav3-rocm-smem.patch` and the step to apply it.
+
 # v0.1 — 2026-10-18 (early public release)
 
 - Ling-3.1: R9700 speed table filled (measured 2026-10-17, provisional until today's clean-stack re-run).
