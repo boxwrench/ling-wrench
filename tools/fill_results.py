@@ -203,12 +203,13 @@ def main():
                 continue
             text = f.read_text(encoding="utf-8")
             found = blocks_in(text)
-            for name, body in found.items():
+            for name in found:
                 seen += 1
-                if "TBD" in body:
-                    bad.append(f"{f}: {name} block still has TBD")
             if not found:
                 bad.append(f"{f}: no marker blocks")
+            if "TBD" in text:
+                hits = [name for name, body in found.items() if "TBD" in body]
+                bad.append(f"{f}: TBD in {', '.join(hits) if hits else 'text'}")
         if bad:
             print("check failed:", file=sys.stderr)
             for b in bad:
