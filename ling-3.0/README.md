@@ -62,15 +62,15 @@ prefill run was 387 tok/s, visible in the range.
 | Generic | SERVES OK | 1K | 953.4 [386.7-956.8] | 29.49 [28.11-29.54] | 1.10 [1.09-2.71] |
 | Generic | SERVES OK | 8K | 1089.2 [1083.6-1089.5] | 27.74 [25.43-28.07] | 7.54 [7.54-7.58] |
 
-Median of the runs; brackets are min-max. OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; no prefix reuse.
+Median of the runs; brackets are min-max. OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; a random nonce per request, so no prefix reuse. Server flags: `--attention-backend TRITON_MLA --moe-backend triton --speculative-config '{"method":"mtp","num_speculative_tokens":1}' --max-model-len 262144 --gpu-memory-utilization 0.72 --max-num-seqs 6 --max-num-batched-tokens 8192 --enable-chunked-prefill --enable-prefix-caching --mamba-cache-mode align --trust-remote-code`; same flags for all three checkpoints.
 <!-- RUNTIME:END -->
 
 <!-- RECEIPT:START -->
 | Item | Value |
 |---|---|
-| Hardware | AMD Radeon 8060S (gfx1151), 128 GB unified; AMD Ryzen AI Max+ 395; 128 GB unified |
-| Software | vLLM 0.26.1rc1.dev467+g838616875; ROCm; compressed-tensors S4/g32 |
-| Method | OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; no prefix reuse. |
+| Hardware | AMD Radeon 8060S (gfx1151); AMD Ryzen AI Max+ 395; 128 GB unified |
+| Software | vLLM 0.26.1rc1.dev467+g838616875 (a ROCm build of vLLM, not an upstream commit; compare checkpoints on one server, not absolute numbers across builds); ROCm; compressed-tensors S4/g32 |
+| Method | OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; a random nonce per request, so no prefix reuse. Server flags: `--attention-backend TRITON_MLA --moe-backend triton --speculative-config '{"method":"mtp","num_speculative_tokens":1}' --max-model-len 262144 --gpu-memory-utilization 0.72 --max-num-seqs 6 --max-num-batched-tokens 8192 --enable-chunked-prefill --enable-prefix-caching --mamba-cache-mode align --trust-remote-code`; same flags for all three checkpoints. |
 <!-- RECEIPT:END -->
 
 ## Run it

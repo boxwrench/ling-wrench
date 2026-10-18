@@ -2,15 +2,15 @@
   "schema": "ling-r9700-bench/1",
   "kind": "serving-check",
   "date": "2026-10-17",
-  "protocol": "OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; no prefix reuse.",
+  "protocol": "OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; a random nonce per request, so no prefix reuse. Server flags: `--attention-backend TRITON_MLA --moe-backend triton --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":1}' --max-model-len 262144 --gpu-memory-utilization 0.72 --max-num-seqs 6 --max-num-batched-tokens 8192 --enable-chunked-prefill --enable-prefix-caching --mamba-cache-mode align --trust-remote-code`; same flags for all three checkpoints.",
   "runtime": {
     "name": "vLLM",
-    "version": "0.26.1rc1.dev467+g838616875",
+    "version": "0.26.1rc1.dev467+g838616875 (a ROCm build of vLLM, not an upstream commit; compare checkpoints on one server, not absolute numbers across builds)",
     "backend": "ROCm",
     "model_format": "compressed-tensors S4/g32"
   },
   "hardware": {
-    "gpu": "AMD Radeon 8060S (gfx1151), 128 GB unified",
+    "gpu": "AMD Radeon 8060S (gfx1151)",
     "cpu": "AMD Ryzen AI Max+ 395",
     "ram": "128 GB unified",
     "os": "Linux"
