@@ -1,3 +1,11 @@
+# v0.2 — 2026-10-18
+
+- Ling-3.1 speed table re-measured on a clean stack (upstream exllamav3 `0f8cf2c3` + the ROCm patch) with the public
+  harness on a quiet machine: prefill 346-351 tok/s, decode 12.2-12.3 (8K) / 7.7 (64K). The 2026-10-17 prefill
+  (378-389, an older local build) is not reproduced and is withdrawn; decode matches.
+- Public input builder reproduces the original input hashes (`bench/inputs/SHA256SUMS` filled); per-context CPU layers in
+  `bench/run_bench.py`; exact AMD wheels, compiler and environment in Run it; `bench/check_determinism.py`.
+
 # v0.1.1 — 2026-10-18
 
 - Known issue: exllamav3 on ROCm with PyTorch 2.9.1 raises `AttributeError` (`shared_memory_per_block`) at the first decode.

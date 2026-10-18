@@ -1,9 +1,10 @@
 # Ling Wrench
 
-> **Status, 2026-10-18: early release.** The Ling-3.0 numbers are final. The Ling-3.1 speed numbers were measured on
-> 2026-10-17 with our own run script on a locally patched exllamav3 build. Today we re-run them on clean upstream
-> exllamav3 with the public harness in `bench/`, add a quality comparison with bartowski's IQ2_XXS GGUF, and add setup
-> guides (including one for coding agents). Expect updates here later today.
+> **Status, 2026-10-18: Ling-3.1 speed verified on a clean stack.** The Ling-3.1 numbers now come from the public
+> harness on upstream exllamav3 `0f8cf2c3` plus the ROCm shared-memory patch, re-run on a quiet machine: prefill
+> 346-351 tok/s, decode 12.2-12.3 tok/s at 8K and 7.7 at 64K. The first table (2026-10-17, an older local build)
+> showed 378-389 tok/s prefill; that is not reproduced on this stack and is withdrawn. Prefill speed-ups are being
+> tested next. Ling-3.0 numbers are unchanged; setup guides are being prepared.
 
 Wrench is a small family of calibrated low-bit quantizations of inclusionAI's
 Ling-3.0-flash and Ling-3.1-flash. Each release keeps the format and launch
@@ -47,4 +48,4 @@ The scripts and documentation here are MIT; see [LICENSE](LICENSE). The base
 models are MIT-licensed work by inclusionAI. The 3.1 conversion and benchmark use
 [turboderp-org/exllamav3](https://github.com/turboderp-org/exllamav3) (MIT).
 Benchmark inputs are built from PG-19 (DeepMind, Apache-2.0) and llama.cpp (MIT);
-token ids are not redistributed. Full notices are in [NOTICE](NOTICE).
+input token ids are not redistributed. Full notices are in [NOTICE](NOTICE).
