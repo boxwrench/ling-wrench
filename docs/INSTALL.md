@@ -164,6 +164,8 @@ EXL3_MOE_STREAM_T=6 python "$PUBLIC_REPO/bench/serve_fast.py" -m "$MODEL" \
   -dev cuda:0 -nw -mcl 62 -mct 8 -gcs 8192 -cs 9216 --port 8000
 ```
 
+**Known issue:** with `-nw`, a cold server whose first request was an 8K prompt returned `NonFiniteLogits` at step 0; send one short request (or, in `examples/chat.py`, a short message) before the first long prompt. See [TROUBLESHOOTING](TROUBLESHOOTING.md).
+
 Model loads measured 54–56 seconds with `-nw` (the earlier receipt's 93.8 s included the post-load warm-up).
 Files were already local, so this is not a cold-disk or download estimate. Use [REPRODUCE](REPRODUCE.md) for the
 executed non-interactive benchmark check.
