@@ -104,8 +104,9 @@ Repeat the same download command to resume. Check errors and remaining disk befo
 
 | Status | Hardware | Prompt | CPU-MoE layers `-mcl` | Threads `-mct` | Chunk `-gcs` | Cache `-cs` |
 |---|---|---:|---:|---:|---:|---:|
-| Measured benchmark placement | R9700 32 GB + 192 GB RAM | 8192 | 60 | 8 | 4096 | 9216 |
-| Measured benchmark placement | same | 65536 | 62 | 8 | 4096 | 66560 |
+| Measured, fastest (runner `--device cuda:0`, `EXL3_MOE_STREAM_T=6`) | R9700 32 GB + 192 GB RAM | 8192 and 65536 | 62 | 8 | 8192 | context + 1024 |
+| Measured, default autosplit (also `examples/chat.py`) | same | 8192 | 60 | 8 | 4096 | 9216 |
+| Measured, default autosplit | same | 65536 | 62 | 8 | 4096 | 66560 |
 | Untested guidance | smaller GPU / same host | start short | increase from the matching row | start at physical cores | 4096 | leave prompt/output headroom |
 | Untested guidance | larger GPU | start short | fewer CPU layers may fit | measure again | 4096 | measure again |
 

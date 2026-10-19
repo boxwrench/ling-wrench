@@ -46,8 +46,9 @@ For 3.0 record the actual weight revision and vLLM build; do not substitute a ve
 
 ## 3. Pick the configuration
 
-Use the [placement table](INSTALL.md#placement-and-first-run): 3.1 measured rows are 60 CPU-MoE layers at 8K,
-62 at 64K, eight threads, chunk 4096. Smaller/larger-GPU suggestions are untested, not fitted configurations.
+Use the [placement table](INSTALL.md#placement-and-first-run). 3.1 fastest measured: benchmark runner with `--device cuda:0`,
+`EXL3_MOE_STREAM_T=6`, 62 CPU-MoE layers, eight threads, chunk 8192. Under autosplit (and `examples/chat.py`): 60 layers at 8K,
+62 at 64K, chunk 4096. Smaller/larger-GPU suggestions are untested, not fitted configurations.
 For 3.0 use the recorded vLLM settings on the measured unified-memory class only; discrete-GPU placement is untested.
 
 ## 4. Install without interactive questions
@@ -120,7 +121,7 @@ Tell the user the selected model/revision, runtime/build, command, log location 
 | `shared_memory_per_block` missing | apply the published patch at the pinned runtime; gfx1201 fallback is tested |
 | VRAM out of memory | check cache/context and other allocations; more CPU layers may help (untested adaptation), but need host RAM |
 | Process vanished / RAM pressure | inspect systemd-oomd logs; reduce memory demand; do not disable system protections |
-| Non-finite logits with chunk 8192 | return to measured chunk 4096 |
+| Non-finite logits with chunk 8192 | chunk 8192 is measured only with `--device cuda:0` and 62 CPU layers; otherwise use 4096 |
 | Unexpectedly slow decode | check physical-core thread count and competing transfers/jobs |
 
 More: [TROUBLESHOOTING](TROUBLESHOOTING.md). Give the human the exact command, environment, versions, memory facts,

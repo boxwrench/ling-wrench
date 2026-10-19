@@ -4,6 +4,14 @@
 - Kept concise model pages and linked the shared guides; clarified measured and untested paths.
 - Added a relative-link check and single-checkpoint INT4 card rendering; corrected memory-unit labels to GiB.
 
+# v0.3 — 2026-10-18
+
+- Ling-3.1 prefill +38-43%: explicit single-device load (`bench/run_bench.py --device cuda:0`), stream threshold
+  `EXL3_MOE_STREAM_T=6`, chunk 8192, 62 CPU-MoE layers. 8K 486.6/498.7, 64K 476.5/476.4 tok/s prefill; decode unchanged
+  (12.02/12.07, 7.86/7.64). Six-window exact comparison with FP8: inside the repeat noise.
+- `examples/chat.py` still loads with autosplit (~350 tok/s prefill); a faster interactive path is being tested.
+- Setup, install, troubleshooting, reproduction and community-benchmark guides; `AGENTS.md`, `llms.txt`.
+
 # v0.2 — 2026-10-18
 
 - Ling-3.1 speed table re-measured on a clean stack (upstream exllamav3 `0f8cf2c3` + the ROCm patch) with the public

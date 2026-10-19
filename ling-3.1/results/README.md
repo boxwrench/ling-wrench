@@ -8,10 +8,10 @@ Rendered by [fill_results.py](../../tools/fill_results.py); never edit marker bl
 <!-- BENCH:START -->
 | Context | Domain | Prefill tok/s | Decode tok/s | TTFT (s) |
 |---:|---|---:|---:|---:|
-| 8K | prose | 351.2 | 12.34 | 23.33 |
-| 8K | code | 347.6 | 12.21 | 23.57 |
-| 64K | prose | 345.8 | 7.72 | 189.51 |
-| 64K | code | 348.0 | 7.67 | 188.31 |
+| 8K | prose | 486.6 | 12.02 | 16.84 |
+| 8K | code | 498.7 | 12.07 | 16.43 |
+| 64K | prose | 476.5 | 7.86 | 137.53 |
+| 64K | code | 476.4 | 7.64 | 137.58 |
 <!-- BENCH:END -->
 
 R9700 32 GB, Ryzen 7 9800X3D, 192 GB DDR5; Ubuntu 24.04.5, ROCm 7.2.1,

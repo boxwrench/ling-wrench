@@ -67,7 +67,16 @@ For the speed table, keep the [INSTALL environment](INSTALL.md#runtime), and the
 unset PYTHONPATH EXL3_MOE_STREAM_T EXL3_MOE_STREAM_FUSED_T EXL3_MOE_RECON_DET
 ```
 
-**Untested output-path variant of the executed full-matrix command**; settings are unchanged, and local paths are represented by variables:
+**Published table (fast settings)**: explicit single-device load, stream threshold 6, chunk 8192, 62 CPU-MoE layers.
+Executed as one invocation per context (8192, then 65536); local paths are represented by variables:
+
+```sh
+EXL3_MOE_STREAM_T=6 python "$PUBLIC_REPO/bench/run_bench.py" --model "$MODEL" --inputs "$INPUTS" --exllamav3 "$EXL3" --device cuda:0 --contexts 8192 --cpu-moe-layers 62 --threads 8 --chunk 8192 --reps 2 --warmup 1 --revision 008db908a26ac55a2999b29617297287b15d187e --out "$WORKDIR/runs/fast-8k.json"
+```
+
+Repeat with `--contexts 65536` and another `--out` for 64K. `--device` skips autosplit's VRAM budget checks; the
+settings fit the R9700 32 GB measured here. **Default settings** (autosplit, chunk 4096; the earlier v0.2 table),
+an untested output-path variant of the executed matrix:
 
 ```sh
 python "$PUBLIC_REPO/bench/run_bench.py" --model "$MODEL" --inputs "$INPUTS" --exllamav3 "$EXL3" --contexts 8192,65536 --cpu-moe-layers 60,62 --threads 8 --chunk 4096 --reps 2 --warmup 1 --revision 008db908a26ac55a2999b29617297287b15d187e --out "$WORKDIR/runs/results.json"

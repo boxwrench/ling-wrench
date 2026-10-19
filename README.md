@@ -9,8 +9,8 @@ Prefill means reading the prompt; decode means writing the answer. These are mea
 
 | Model | Machine | Context / text | Prefill tok/s | Decode tok/s | By / version |
 |---|---|---|---:|---:|---|
-| 3.1 EXL3 2.10 bpw | R9700 32 GB; 9800X3D; 192 GB RAM | 8K code | 347.6 | 12.21 | maintainer; exllamav3 `0f8cf2c3` + ROCm patch |
-| 3.1 EXL3 2.10 bpw | same | 64K code | 348.0 | 7.67 | maintainer; same runtime |
+| 3.1 EXL3 2.10 bpw | R9700 32 GB; 9800X3D; 192 GB RAM | 8K code | 498.7 | 12.07 | maintainer; exllamav3 `0f8cf2c3` + ROCm patch, explicit load, chunk 8192 |
+| 3.1 EXL3 2.10 bpw | same | 64K code | 476.4 | 7.64 | maintainer; same runtime and settings |
 
 Linux, ROCm 7.2.1; greedy, 256 generated tokens, no speculation or prefix reuse; two runs after a warm-up.
 Full table, spread and receipt: [Ling-3.1](ling-3.1/README.md).
