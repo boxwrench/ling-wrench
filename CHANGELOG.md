@@ -1,3 +1,13 @@
+# Fast interactive path — 2026-10-18 (local)
+
+- `bench/exllamav3-explicit-device.patch`: opt-in `-dev/--device` for `model_init` entry points such as
+  `examples/chat.py`; default remains autosplit, and `-gs`/`-tp` are refused. Local, not upstream.
+- `examples/chat.py`-equivalent load with `-dev cuda:0 -nw -mcl 62 -mct 8 -gcs 8192 -cs 9216` and
+  `EXL3_MOE_STREAM_T=6`: 502.4 tok/s prefill / 12.24 decode on the public 8K code input; runner 505.8/12.20.
+  Without `-nw`, repetitions alternated ~475/~500. The console loop itself was not driven.
+- `bench/serve_fast.py`: local OpenAI-compatible chat endpoint with the same loader; stdlib only, one request at a
+  time, non-streaming, Ling template, thinking per request, greedy by default.
+
 # Documentation update — 2026-10-18
 
 - Added Linux installation, agent setup, troubleshooting, reproduction and community-report guides.

@@ -56,17 +56,34 @@ Scored on the same R9700 with exllamav3 in its deterministic settings ([quality 
 **Known ROCm issue:** this torch build lacks `shared_memory_per_block`, so the pinned runtime
 fails at first decode without the [published patch](../bench/exllamav3-rocm-smem.patch). Apply it as described in INSTALL.
 
-First follow [INSTALL](../docs/INSTALL.md) for the pinned runtime, wheels, patch, environment and weights.
-**The measured speed uses the benchmark runner** (`bench/run_bench.py --device cuda:0`, see [REPRODUCE](../docs/REPRODUCE.md)).
-exllamav3's `examples/chat.py` always loads with autosplit, which measured about 350 tok/s prefill here; a faster
-interactive path is being tested. **Untested interactive launch** (flags checked, chat not rerun):
+First follow [INSTALL](../docs/INSTALL.md) for the pinned runtime, wheels, both patches, environment and weights.
+
+**Measured interactive path.** `examples/chat.py` loads through `model_init`. Apply the
+[explicit-device patch](../bench/exllamav3-explicit-device.patch) and pass `-dev cuda:0`. On the public 8K code input
+(8192 prompt tokens, greedy 256 generated, 16-token warm-up excluded, two reps) this loader measured **502.4 tok/s
+prefill / 12.24 tok/s decode** (reps 500.6/12.24 and 504.2/12.24). The benchmark runner measured 505.8/12.20 on the
+same box in the same session; the published fast row is 498.7/12.07. The chat console loop itself was not driven.
 
 ```sh
-EXL3_MOE_STREAM_T=6 python "$EXL3/examples/chat.py" -m "$MODEL" -mode ling -no_think -temp 0 -mcl 60 -mct 8 -gcs 4096 -cs 9216
+EXL3_MOE_STREAM_T=6 python "$EXL3/examples/chat.py" -m "$MODEL" \
+  -dev cuda:0 -nw -mode ling -no_think -temp 0 \
+  -mcl 62 -mct 8 -gcs 8192 -cs 9216
 ```
 
-Under autosplit this is the measured 8K placement (64K: 62 CPU-MoE layers, cache 66560). With the explicit loader the
-measured placement is 62 CPU-MoE layers and chunk 8192 at both 8K and 64K.
+Without `-nw`, the same load alternated about 475 and 500 tok/s across 256-token repetitions; `-nw` skips
+`model_init`'s post-load warm-up, so the first interactive prompt pays kernel autotune instead. Omit `-dev` for the
+measured autosplit fallback (60 CPU-MoE layers, chunk 4096, about 350 tok/s prefill). `-dev` is refused with `-gs` or
+`-tp`; see [INSTALL](../docs/INSTALL.md) for the flag and placement details.
+
+For agents and showcases, [bench/serve_fast.py](../bench/serve_fast.py) loads with the same flags and serves
+`POST /v1/chat/completions` on localhost only. It is non-streaming, handles one request at a time, uses the Ling chat
+template with thinking off unless the request sets `"thinking": true`, and is greedy by default.
+
+```sh
+EXL3_MOE_STREAM_T=6 python bench/serve_fast.py -m "$MODEL" \
+  -dev cuda:0 -nw -mcl 62 -mct 8 -gcs 8192 -cs 9216 --port 8000
+```
+
 Other GPUs and settings: [INSTALL](../docs/INSTALL.md). With a coding agent: [AI_SETUP](../docs/AI_SETUP.md).
 Problems: [TROUBLESHOOTING](../docs/TROUBLESHOOTING.md).
 

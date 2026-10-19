@@ -43,6 +43,7 @@ git -C "$EXL3" checkout 0f8cf2c3
 python3 -m venv "$EXL3/.venv"
 . "$EXL3/.venv/bin/activate"
 git -C "$EXL3" apply "$PUBLIC_REPO/bench/exllamav3-rocm-smem.patch"
+git -C "$EXL3" apply "$PUBLIC_REPO/bench/exllamav3-explicit-device.patch"
 ```
 
 Use Python 3.12 for this venv. The exact torch/Triton wheels were installed from local files in verification.
@@ -104,8 +105,10 @@ Repeat the same download command to resume. Check errors and remaining disk befo
 
 | Status | Hardware | Prompt | CPU-MoE layers `-mcl` | Threads `-mct` | Chunk `-gcs` | Cache `-cs` |
 |---|---|---:|---:|---:|---:|---:|
-| Measured, fastest (runner `--device cuda:0`, `EXL3_MOE_STREAM_T=6`) | R9700 32 GB + 192 GB RAM | 8192 and 65536 | 62 | 8 | 8192 | context + 1024 |
-| Measured, default autosplit (also `examples/chat.py`) | same | 8192 | 60 | 8 | 4096 | 9216 |
+| Measured, fastest (`-dev cuda:0`, `EXL3_MOE_STREAM_T=6`; runner uses `--device cuda:0`) | R9700 32 GB + 192 GB RAM | 8192 and 65536 | 62 | 8 | 8192 | context + 1024 |
+| Measured, fastest `examples/chat.py`-equivalent (`model_init` load; console loop not driven) | same | 8192 | 62 | 8 | 8192 | 9216 |
+| Measured, `bench/serve_fast.py` (curl: short chat and 8K code) | same | short and 8192 | 62 | 8 | 8192 | 9216 |
+| Measured, default autosplit (no `-dev`; also `examples/chat.py` fallback) | same | 8192 | 60 | 8 | 4096 | 9216 |
 | Measured, default autosplit | same | 65536 | 62 | 8 | 4096 | 66560 |
 | Untested guidance | smaller GPU / same host | start short | increase from the matching row | start at physical cores | 4096 | leave prompt/output headroom |
 | Untested guidance | larger GPU | start short | fewer CPU layers may fit | measure again | 4096 | measure again |
@@ -113,22 +116,45 @@ Repeat the same download command to resume. Check errors and remaining disk befo
 Rows describe one machine, not minimum requirements. More CPU layers free VRAM but need more host RAM.
 Thread counts above physical cores reduced decode in the tuning run; do not assume more is faster.
 
-**Untested portable flag/mode check**, adapted from the executed lock-wrapped check.
-It does not load the model:
+**Checked flag/mode listing** (does not load the model; exit 0):
 
 ```sh
 python "$EXL3/examples/chat.py" -m "$MODEL" -mode ling -no_think -temp 0 -mcl 60 -mct 8 -gcs 4096 -cs 9216 -modes
 ```
 
-Expected: Ling mode is listed, exit 0. For chat, the following generation step is **untested** by the verification job:
+Expected: Ling mode is listed. The explicit-device flag and its refusal messages were checked on the pinned checkout.
+
+**Measured interactive path.** This is the `model_init.init` load that `examples/chat.py` runs, with the
+explicit-device patch and the public 8K code ids fed non-interactively. It measured **502.4 tok/s prefill /
+12.24 tok/s decode** (8192 prompt tokens, greedy 256 generated, 16-token warm-up excluded, two reps:
+500.6/12.24 and 504.2/12.24). The benchmark runner measured 505.8/12.20 in the same session. The interactive
+console loop itself was not driven.
 
 ```sh
-python "$EXL3/examples/chat.py" -m "$MODEL" -mode ling -no_think -temp 0 -mcl 60 -mct 8 -gcs 4096 -cs 9216
+EXL3_MOE_STREAM_T=6 python "$EXL3/examples/chat.py" -m "$MODEL" \
+  -dev cuda:0 -nw -mode ling -no_think -temp 0 \
+  -mcl 62 -mct 8 -gcs 8192 -cs 9216
 ```
 
-Keep a chat terminal interactive. Use [REPRODUCE](REPRODUCE.md) for the executed non-interactive generation check.
-Model loads measured about 57–58 seconds in the first verified matrix and 93.8 seconds in the quiet receipt;
-files were already local, so neither is a cold-disk or download estimate.
+`-nw` skips `model_init`'s post-load warm-up. Without it, the same load alternated about 475 and 500 tok/s across
+256-token repetitions; with it, both measured reps were 500–504. The trade is that the first interactive prompt pays
+the kernel compile/autotune that the skipped warm-up would have done. `-dev` is refused with `-gs` or `-tp`.
+Omit `-dev` and use 60 layers/chunk 4096 for the autosplit fallback; that path still loads and generates.
+
+**Agents and showcases.** [bench/serve_fast.py](../bench/serve_fast.py) loads with the same flags, warms up once,
+and serves `POST /v1/chat/completions` on `127.0.0.1` only. It is non-streaming, single-request, uses the Ling chat
+template, turns thinking off unless the request sets `"thinking": true`, and is greedy when `temperature` is 0. Its
+`timings` field reports the generator's own prefill/decode seconds and token counts. It was tested with curl on a
+short chat and the 8K code prompt.
+
+```sh
+EXL3_MOE_STREAM_T=6 python "$PUBLIC_REPO/bench/serve_fast.py" -m "$MODEL" \
+  -dev cuda:0 -nw -mcl 62 -mct 8 -gcs 8192 -cs 9216 --port 8000
+```
+
+Model loads measured 54–56 seconds with `-nw` (the earlier receipt's 93.8 s included the post-load warm-up).
+Files were already local, so this is not a cold-disk or download estimate. Use [REPRODUCE](REPRODUCE.md) for the
+executed non-interactive benchmark check.
 
 ## Ling-3.0 INT4
 
