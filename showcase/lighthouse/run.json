@@ -1,0 +1,54 @@
+{
+  "demo": "lighthouse",
+  "date": "2026-10-19",
+  "one_shot": true,
+  "edits": "none: index.html is the model answer, byte for byte",
+  "model": {
+    "repo": "boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw",
+    "weights": "Ling-3.1-flash Wrench EXL3 2.10 bpw (153.6 GB)"
+  },
+  "runtime": {
+    "exllamav3": "0f8cf2c3 + bench/exllamav3-rocm-smem.patch + bench/exllamav3-explicit-device.patch",
+    "server": "bench/serve_fast.py",
+    "gpu": "AMD Radeon AI PRO R9700 32 GB (one card)",
+    "cpu_ram": "Ryzen 7 9800X3D, 192 GB DDR5",
+    "torch": "2.9.1+rocm7.2.1.gitff65f5bc",
+    "rocm": "7.2.1"
+  },
+  "settings": {
+    "args": [
+      "-dev",
+      "cuda:0",
+      "-nw",
+      "-mcl",
+      "62",
+      "-mct",
+      "8",
+      "-gcs",
+      "8192",
+      "-cs",
+      "66560"
+    ],
+    "env": {
+      "EXL3_MOE_STREAM_T": 6
+    },
+    "thinking": true,
+    "sampling": {
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "top_k": 20,
+      "seed": 42
+    },
+    "max_new_tokens": 64000
+  },
+  "tokens": {
+    "prompt": 173,
+    "thinking": 32626,
+    "answer": 10477
+  },
+  "timings": {
+    "decode_tps": 10.99,
+    "wall_minutes": 65.5
+  },
+  "browser_check": "renders in headless Chrome (software WebGL) with no console errors"
+}

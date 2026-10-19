@@ -1,0 +1,1486 @@
+The user wants a complete Three.js scene: rocky islet at dusk, lighthouse beam sweeping over rolling waves, gulls circling. Everything procedural, no external assets. One HTML file, import map pinned to three@0.170.0.
+
+Let me plan the scene:
+
+1. **Renderer/Scene/Camera**: WebGLRenderer, ACES tone mapping, fog, dusk sky.
+2. **Sky**: gradient sky via large sphere with shader material or vertex colors. Dusk colors — deep purple/orange horizon. Maybe a sun glow. Stars faintly appearing.
+3. **Ocean**: rolling waves — a plane geometry with vertex displacement in shader (Gerstner waves or simple sine sum), with nice color gradient, foam near the islet maybe. Use a custom ShaderMaterial for water with waves, fresnel, specular sun glint, and lighthouse beam reflection maybe too complex — keep it simpler: specular highlight from beam direction could be nice but let's keep manageable.
+4. **Islet**: rocky island — procedural geometry. Could use an icosahedron displaced with noise, flattened, or a custom radial geometry. Simple approach: create a cone-ish rock using CylinderGeometry with noise displacement, plus a few rock boulders (icosahedrons with noise). Add grass-ish top color via vertex colors.
+5. **Lighthouse**: cylinder tower with stripes (procedural — use canvas? No external textures, but canvas-generated textures are allowed? "no external models, textures, images or other assets, build everything in code" — canvas texture generated in code is fine, it's still code. But to be safe, could use vertex colors or shader stripes. Canvas texture is built in code, acceptable. I'll generate a small canvas texture for stripes, or use a shader. Simpler: use MeshStandardMaterial with a canvas texture made in code — that's "built in code". I'll do that.)
+   - Lamp room at top, glowing light, beam: a cone/cylinder geometry with additive transparent shader, rotating. Two beams opposite directions maybe. Beam should sweep — rotate around Y.
+   - Beam: use a SpotLight too for actual lighting on water/islet, plus volumetric-looking cone mesh with gradient opacity.
+6. **Gulls**: simple bird shapes — two triangles/wings flapping, circling paths. Build from cones/planes. Animate wings with sine flap. Orbit around islet at varying radii/heights.
+7. **Extras**: maybe a small dock/boat? Keep calm and polished. Maybe subtle clouds? Could add a few billboard-ish cloud blobs (spheres merged) — cheap. Or skip. Add moon? Dusk — maybe sun low on horizon with glow sprite (canvas-generated radial gradient texture, in code).
+8. **Post**: maybe not needed; keep simple but polished. Could add subtle vignette via CSS overlay. Fine.
+
+Performance: waves plane 128x128 segments displaced in vertex shader — good. Gulls ~6. Rocks few.
+
+Let me write the water shader:
+
+Vertex: sum of Gerstner-ish waves:
+```
+pos.z += sum of sines based on x,y and time
+```
+Compute normal analytically or via finite differences in shader. Use normal for lighting: diffuse from directional (sun) + specular (Blinn-Phong) + fresnel mixing deep/shallow colors + fog.
+
+Beam reflection on water: could add a specular streak from beam direction — compute specular from beam light position (lighthouse lamp) with high intensity, narrow. Actually a point light specular from lamp position gives a nice glint path. Add uniform lampPos and beam intensity; specular pow high.
+
+Also foam near island: distance-based foam ring using noise — maybe simple: foam where water height near shore radius. Compute distance to island center in shader, add foam band with noise texture... noise in shader via hash. Keep modest.
+
+Sky: big sphere, BackSide, shader gradient: horizon orange -> purple -> dark blue zenith, plus sun glow disc toward sun direction, stars via hash sparkle above certain elevation. Fog color matching horizon.
+
+Lighting: ambient hemisphere light, directional sun low, spotlight from lighthouse rotating (target rotating around). SpotLight with target object rotating.
+
+Beam mesh: cone with custom shader — opacity fading along length and soft edges (fresnel-ish or radial fade using uv). Use additive blending, depthWrite false. Two cones opposite. Rotate group.
+
+Also a glow sprite at lamp.
+
+Gulls: body = small elongated cone or capsule; wings = two planes that rotate around z (flap). Group per gull; path: circle with radius, height, phase, slight vertical bob; orient along tangent.
+
+Rocks: icosahedron geometry detail 1-2, displace vertices with pseudo-noise function (value noise via sin hashing in JS). Island: use a custom approach — take a CylinderGeometry (radiusTop small, radiusBottom big, height) then displace with noise, or use a "radial" geometry. Simpler robust: create island from a displaced sphere scaled (squashed), positioned half-submerged; plus a plateau top with grass color via vertex colors based on height/normal. Vertex colors with MeshStandardMaterial vertexColors: true.
+
+Noise in JS: simple 3D value noise:
+```
+function hash(x,y,z){ return fract(sin(dot)...)} 
+```
+Implement pseudo-noise with sin combos — fine for rocks.
+
+Island shape: I want a craggy islet. Approach: start with IcosahedronGeometry(radius, 4)? That's a lot of vertices (detail 4 => 2562 verts? detail 4 icosahedron = 10*4^2*... fine). Displace radially with noise, scale y down, flatten top above waterline: clamp y to plateau with noise. Vertex color: gray rock, darker wet band near water, greenish-brown grass on top flat areas.
+
+Lighthouse placement: on top of island. Island radius ~ 8, height ~ 6 above water. Lighthouse height ~ 7.
+
+Camera: orbit controls? "Calm, polished and satisfying to watch" — slow auto-orbit with OrbitControls enabled, damping, autoRotate slow. Allow user drag. Limit polar angle so you don't go under water.
+
+Also add subtle boat? Skip. Maybe add distant rocks (sea stacks) — 2-3 small rocks in water. Nice.
+
+Clouds: a few flat-ish clusters of spheres with transparent material, drifting slowly. Could be nice at dusk. Keep cheap: 5 clouds, each 4-6 spheres, MeshBasicMaterial? Use Lambert with fog. Or shader billboard. Simple spheres with standard material, slightly emissive pink. Drift slowly.
+
+Sun: directional light + glow sprite (canvas radial gradient) placed low near horizon.
+
+Moon maybe not needed.
+
+Foam ring around island: in water shader, use island radius uniform; foam = smoothstep band + noise; white color additively mixed. Also foam around sea stacks — pass positions as uniform array (vec3s with radius). Keep 3 extra rocks.
+
+Let me also add gentle mist? Fog handles it.
+
+Tone mapping ACESFilmic, exposure ~1.1. Output color space default sRGB in 0.170.
+
+Resize handler. Pixel ratio clamp 2.
+
+Now write code carefully.
+
+Import map:
+```html
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}
+</script>
+```
+Import OrbitControls from 'three/addons/controls/OrbitControls.js'.
+
+Water shader details:
+
+Vertex shader:
+```glsl
+uniform float uTime;
+varying vec3 vPos; // world pos
+varying vec3 vNormal;
+varying float vWaveH;
+
+// wave function
+vec3 gerstner-ish...
+```
+I'll do sum of 4 directional sine waves with analytic normals:
+
+```
+float wave(vec2 p, vec2 dir, float freq, float speed){ return sin(dot(p,dir)*freq + uTime*speed); }
+```
+Height h = Σ amp * wave. Normal: dh/dx, dh/dy computed analytically: derivative = amp*freq*dir.x*cos(...). Normal = normalize(vec3(-dhdx, -dhdy, 1)) in plane local space (plane rotated -PI/2 so local z is world y... careful). I'll create PlaneGeometry rotated via geometry.rotateX(-Math.PI/2) so positions are x, y=0, z. Then displacement along y. Local coords: x, z horizontal; y up. Normal local = normalize(vec3(-dhdx, 1, -dhdz)). Then world normal = same since no rotation on mesh (geometry pre-rotated, mesh at origin). World pos = position + (0, h, 0).
+
+Fragment:
+- deep color (dark blue-teal), shallow color (dusk teal-green), fresnel to horizon reflection color (dusk orange-purple gradient based on view angle? keep simple: mix toward a "skyColor" uniform).
+- sun specular: sunDir uniform, blinn spec pow 200 * sunColor.
+- lamp spec: lampPos uniform, pow 600, intensity modulated by beam angle? Beam sweeps — reflection streak should sweep too. Compute beam direction uniform (vec3 horizontal dir), and only show lamp glint where angle between view-specular and beam dir is small... Simpler: lamp specular intensity scaled by how aligned the fragment's horizontal direction from lamp is with beam dir: `float align = pow(max(dot(normalize(wp - lampPos.xz... ), beamDir),0.), 8.)`. That gives a moving glint under the beam. 
+- foam: near island and rocks: uniform vec4 uFoamSpots[4] (xz, radius, intensity). foam band: d = distance(xz, spot.xz) - radius; foam = smoothstep(1.5, 0.0, d) * (noise) ... plus wave crest foam: foam where wave height high: smoothstep on vWaveH. Mix white.
+- fog: use THREE fog manually — include fog via `fog: true` in ShaderMaterial requires fog chunks. Easier: include fog manually: uniform fogColor, fogNear, fogFar; compute fogFactor from distance to camera (vViewZ). I'll pass cameraPosition (built-in uniform in ShaderMaterial? cameraPosition is available in vertex and fragment when declared? In ShaderMaterial, `cameraPosition` is a built-in uniform provided by three). Yes, cameraPosition is available. Compute dist = length(vWorldPos - cameraPosition).
+
+Sky shader: sphere radius ~ 400 (within far). Fragment: mix colors by normalized y of direction; sun glow: pow(dot(dir, sunDir)) for halo + disc; stars: hash on direction grid, only above horizon, subtle twinkle with time.
+
+Beam shader: cone geometry (open-ended), additive. Opacity = (1 - vUv.y)^2 * edge fade. For cone, uv.y runs along height. Also fade near tip? Beam originates at lamp, widens downward — cone with apex at lamp: ConeGeometry apex at top? ConeGeometry(radius, height) apex at +height/2, base at -height/2. Position so apex at lamp, tilt downward slightly (beam angled down ~ 4-6 degrees). Rotate group around Y.
+
+Edge softness: use fresnel-like: dot(viewDir, normal) — for additive cone, alpha *= pow(abs(dot(normal, viewDir)), ?) Actually for volumetric fake, alpha stronger at center of beam when viewed: use `pow(1.0 - abs(dot(normalize(vNormal), normalize(vViewDir))), 1.5)`? Hmm: For a cone, the silhouette edges have normal perpendicular to view dir (dot ~0), center has dot ~±1. We want alpha higher at center: alpha *= pow(abs(dot(n, v)), 2). That works.
+
+Also add a SpotLight from lamp position, target rotating with beam, angle ~0.12 rad, intensity high, distance ~ 120, penumbra 0.4. Target positioned at beam end rotating. Two spotlights? One is enough, matching one beam; second beam opposite could have second spotlight — two spotlights fine.
+
+Gull model: 
+- body: CapsuleGeometry small rotated horizontal, or cone. Use a stretched sphere (scale). White material with slight gray.
+- wings: two thin boxes or custom triangle geometry; flap by rotation.z = ±sin(t*flapSpeed)*0.6. Wings as PlaneGeometry(0.9, 0.25) positioned at sides, pivot at inner edge: translate geometry so pivot at root.
+- tail: small cone.
+- head: tiny sphere + beak cone orange.
+Group; flight path: parametric: pos = center + (cos(a)*r, h + sin(t*0.7)*1.2, sin(a)*r), a = t*speed + phase. Orientation: lookAt next point. Banking: roll slightly.
+
+Gull flap: sometimes glide — flap amplitude modulated by slow sine (glide periods). Nice touch.
+
+Clouds: create 6 clouds; each: 5 spheres flattened, MeshStandardMaterial({color dusk pink, transparent 0.85, flatShading?}) — standard material lit by sun gives nice tint. Drift: move x slowly, wrap around. Or keep static with slight bobbing. Drift better. Place at y 40-70, radius spread 100-250. Fog will soften.
+
+Stars in sky shader — dusk, few stars near zenith.
+
+Sun position: low, e.g., elevation ~ 8°, azimuth opposite to initial camera for nice backlight. sunDir = normalize(vec3(-0.6, 0.12, -0.5))? Choose sun toward west over water. Camera initial at (30, 12, 30) looking at island. Sun at azimuth so it's visible: place sun direction (-0.55, 0.10, 0.35) normalized... Let's set sunDir = normalize(new Vector3(-0.5, 0.09, -0.8))? Camera at (26, 10, 34) looking at (0,4,0): view direction toward origin is (-26,-6,-34) normalized ≈ (-0.58,-0.13,-0.76). Sun roughly in that horizontal direction (-0.5,0.1,-0.8) → sun visible in frame above horizon. Good: sunset over water in initial view.
+
+DirectionalLight position = sunDir * 100, color warm orange, intensity ~1.2. Hemisphere: sky purple-blue, ground dark blue, 0.5. Ambient small.
+
+Lighthouse stripes: canvas texture 64x64? Tower: cylinder radius 1.6 bottom, 1.1 top, height 6, 24 segments. Texture: vertical stripes red/white bands horizontal (bands around tower): canvas 2x... bands: draw horizontal bands (rows) alternating red/white — texture wraps around circumference. Canvas 8 wide x 64 tall? Bands horizontal in texture = rows. Draw 5 bands. Also slight grime? Keep clean.
+
+Lamp room: cylinder glass (transparent, emissive), roof cone red, railing torus? Keep: glass cylinder with emissive warm, metal cap cone, small sphere light source glow sprite.
+
+Beam origin at lamp height: island top y ≈ ? Island: radius 9, displaced sphere scaled: base sphere radius 8, scale y 0.55 → height ~ 8.8 total, center at y=2 → top ~ 6.4, bottom -6.8 underwater. Flatten top: clamp y > 3.5 to 3.5 + noise*0.4 → plateau ~3.5-4. Lighthouse base at y≈3.6. Lamp at 3.6+6+1 ≈ 10.6.
+
+Spotlight position at lamp, target rotating radius 60 at y ~ 2 (water level) — target object must be added to scene.
+
+Beam cone: length ~ 70, radius at end ~ 7, apex at lamp. Slight downward tilt: rotate cone so axis points slightly down along horizontal dir. Cone axis is Y; rotate to horizontal: rotateZ(-PI/2) points +Y to +X? Then tilt down a bit: rotate around Z by -(PI/2 - tilt)? Let's construct: beamGroup at lamp position; inside, cone mesh with geometry translated so apex at origin: ConeGeometry apex at +h/2; translate geometry by -h/2 in y → apex at origin, base at -h. Then rotate mesh: rotation.z = PI/2 + tiltDown? Rotating around z by +PI/2 maps -Y to +X? Rotation z by θ: x' = x cosθ - y sinθ, y' = x sinθ + y cosθ. Point (0,-h,0) with θ=PI/2: x' = -(-h)(1)= h? x' = 0*cos - (-h)*sin(PI/2) = h. y' = 0*sin + (-h)*cos = 0. So base at +X. Good: rotation.z = PI/2 → beam along +X. Tilt down: rotation.z = PI/2 - tilt (tilts base downward? base y' = -h*cos(PI/2 - tilt) = -h*sin(tilt) <0 yes downward). 
+
+Then beamGroup.rotation.y sweeps. Two beams: second with rotation.y = PI within group? Put both cones in group, second rotated PI around Y at group level: create beam2 mesh with rotation.y = PI applied to its own axis... simpler: beamGroup contains coneA (along +X tilted) and coneB (clone with rotation.y = PI). Rotating beamGroup.rotation.y = t*speed sweeps both opposite.
+
+SpotLight targets: targetA positioned at lamp + dir*60 where dir rotates; update per frame: targetA.position.set(lamp + rotated offset). Or make target a child of beamGroup at (60, -60*tan(tilt)... , 0) and ( -60, ... ) with rotation.y=PI. SpotLight.target must be in scene graph — child of beamGroup which is in scene: works, three updates target matrixWorld.
+
+Spot angle: beam cone radius 7 at 70 → half-angle atan(7/70) ≈ 0.1 rad. Spot angle 0.14, penumbra 0.5.
+
+Intensity: three 0.170 uses physically correct lights by default? In r155+, useLegacyLights default false → intensities in candela-ish; SpotLight intensity needs to be high like 2000+ with distance. Hmm, r170: renderer.useLegacyLights removed/default false. SpotLight intensity ~ power. For spot with distance 120, decay 2 default: intensity needs to be large (e.g., 4000). DirectionalLight intensity ~ 2-3 fine. Hemisphere 0.6. I'll tune: spot intensity 6000, decay 1.5? Set decay to 1.2 to soften falloff. Or set decay=0? decay 0 means no falloff — allowed? In physical mode decay default 2; can set decay=1. I'll use intensity 3000, distance 150, decay 1.5. Tune-ish; also beam mesh additive gives the visual regardless.
+
+Also point light at lamp small warm (intensity 30, distance 20) to light tower top.
+
+Water lamp glint uniform: uBeamDir (vec2 horizontal normalized), uLampPos (vec3). align = pow(max(dot(normalize(wp.xz - lamp.xz), uBeamDir),0.),6.) — but beam is tilted down; horizontal dir fine. Also glint only where beam hits water within distance: multiply by smoothstep on distance from lamp < beamLength. And modulate by beam intensity constant.
+
+Foam spots: island (0,0,r=9.5), rocks at (18, -14, r 3), (-22, 10, r 2.5), (30, 24, r 2). Pass vec4 array[4].
+
+Water geometry: PlaneGeometry(500, 500, 200, 200) → 40k verts fine. Vertex shader displacement. Far plane 800, fog far ~ 260, near 40. Sky sphere radius 380 < far.
+
+Fog: scene.fog = FogExp2? Use Fog(color, 60, 280). Water shader manual fog matching. Sky shader: no fog (it IS the background) but blend horizon color to fog color.
+
+Colors dusk:
+- fog/horizon: #2a1e3f? Dusk palette: horizon warm orange #ff9a5c near sun, else mauve #7a5a8c; zenith deep indigo #1b1f3a.
+- water deep: #16324a, shallow: #2e6f7a, sky reflect: mix of horizon colors.
+
+Sky shader gradient: base = mix(horizonColor, zenithColor, pow(max(dir.y,0), 0.6)); sun glow: g = pow(max(dot(dir,sunDir),0), 8)*sunGlowColor*0.6 + disc pow(...,300)*bright. Below horizon (dir.y<0): darker water-ish color (won't be visible much since water covers). Stars: hash grid on dir, only dir.y>0.25, twinkle.
+
+Star hash: use direction quantized: p = floor(dir.xz/dir.y * 200)? Simpler: cell = floor(vec3(dir.x,dir.y,dir.z)*180); hash → star if >0.9985, brightness by hash, twinkle sin(time*3+hash*40). Multiply by smoothstep(0.2,0.6,dir.y). Subtle.
+
+Island vertex colors: compute per vertex after displacement: 
+- wet band: y < 0.8 → dark slate #2b3138
+- rock mid: gray #6b6f75 with variation by noise
+- grass top: y > plateau-0.6 and normal.y > 0.6 → #4a6b3a dusk-muted, mix.
+MeshStandardMaterial vertexColors, roughness 0.95, flatShading true for craggy look. flatShading with vertex colors fine.
+
+Displacement noise JS:
+```
+function noise3(x,y,z){ // value noise-ish via trig hash
+  return Math.sin(x*1.7+Math.sin(y*2.3)+Math.sin(z*1.3)) * ... 
+}
+```
+Better: layered: 
+```
+function n(x,y,z){return Math.sin(x*1.3+y*2.1+z*1.7)*0.5+Math.sin(x*3.1+z*2.7+y*1.9)*0.3+Math.sin(y*4.3+x*2.9)*0.2;}
+```
+Deterministic, smooth-ish. Multiply radial displacement: r = 1 + 0.35*n(x*0.4,...). For island: take IcosahedronGeometry(8, 3) (detail 3 → 1282 verts? detail d: verts = 10*d²+2 → d=3: 92? Actually formula: 10*4^d? Icosahedron detail param subdivides; detail 3 gives 642 faces... fine either way). Displace each vertex: dir = normalize(pos); newPos = dir * (8 * (1 + 0.3*n(pos*0.35))); then scale y*0.55; then flatten: if y>3.2: y = 3.2 + (y-3.2)*0.15 + n*0.15. Then computeVertexNormals. Position island mesh y = 1.5 so plateau ~ 3.2*0.55? Wait order: displace on sphere radius 8 → y up to 8; scale y 0.55 → 4.4; flatten threshold 2.6 → plateau ≈ 2.6 + small noise. Mesh position.y = 1.2 → plateau ~3.8, waterline y=0 cuts sphere at... bottom -4.4+1.2 = -3.2 underwater. Good.
+
+Sea stacks: same function smaller radius 2-3, scale y 0.8, positioned in water, height ~ 4-6.
+
+Boulders on island top: 3-4 small displaced icosahedrons gray.
+
+Lighthouse details:
+- base: cylinder radius 2.2 h 0.8 gray stone.
+- tower: cylinder rTop 1.05 rBottom 1.55 h 5.5, striped canvas texture, roughness 0.8.
+- balcony: torus or cylinder ring radius 1.35 h 0.15 dark metal at top.
+- lamp room: cylinder r 0.95 h 1.1, material: MeshStandardMaterial emissive #ffd9a0 emissiveIntensity 2, color #fff, transparent? Use glass: MeshPhysicalMaterial transmission? Overkill; use MeshStandardMaterial({color:#ffe9c4, emissive:#ffc46b, emissiveIntensity:2.2}) plus transparent opacity 0.9.
+- roof: cone r 1.15 h 0.9 red #a33.
+- glow sprite at lamp center: canvas radial gradient texture, SpriteMaterial additive, scale 6.
+- Also small PointLight warm.
+
+Canvas texture for stripes: 128x128, bands: 6 horizontal bands alternating #e8e2d6 and #b03a2e, plus subtle vertical shading noise? Keep bands clean. texture.wrapS repeat. colorSpace = SRGBColorSpace.
+
+Gull count 7. Materials shared. Wing geometry: PlaneGeometry(1.1, 0.28, 1, 1) translate x by ±0.55 so pivot at root; rotate to horizontal (plane default XY; we want wings horizontal: rotateX(-PI/2) → lies in XZ). Then flap rotation.z? After rotateX(-PI/2), wing extends along +X, flapping rotates around Z axis (roll around body forward axis?). Body forward = direction of travel; wings extend sideways (perpendicular). Set gull group oriented so +Z forward? Let's define gull local: forward +Z, wings along ±X, flap = rotation around Z axis? Wing along +X flapping up/down rotates around Z axis (the forward axis) — yes rotation.z for right wing, negative for left. Wing geometry: PlaneGeometry(width 1.1 along X, height 0.28 along Y) → rotateX(-90°) puts it in XZ plane extending X. Pivot: translate(0.55, 0, 0) before rotate? translate then rotate: geometry.translate(0.55,0,0); geometry.rotateX(-PI/2) → extends +X in XZ. Right wing mesh rotation.z = flap; left wing: geometry translated -0.55, rotation.z = -flap. Slight dihedral.
+
+Body: SphereGeometry(0.16, 8, 6) scale (0.7, 0.6, 1.6). Head sphere 0.09 at z 0.28, beak cone small orange rotated to +Z. Tail: cone flattened at -Z. Color #e8e6df, darker wingtips? Wings material #dfe0da with gray tip — skip tips, maybe two-tone via second small plane? Keep simple.
+
+Flight: each gull: params {r, h, speed, phase, dir(±1), flapSpeed, glidePhase}. Position: angle = phase + t*speed*dir; x = cos*r, z = sin*r, y = h + sin(t*0.5+phase)*1.5. Orientation: compute velocity direction analytically: dx/dt = -sin(angle)*r*speed*dir etc. Set gull.rotation.y = atan2(vx, vz)? For forward +Z: yaw = Math.atan2(vx, vz). Pitch slight. Banking: rotation.z? roll around forward: apply rotation order; simple: gull.rotation.set(pitch, yaw, bank) with order 'YXZ'... bank around Z after yaw — use rotation order default XYZ; set rotation.y=yaw, rotation.x=pitch, rotation.z=bank — with XYZ order, z applied first... eh, visually fine.
+
+Flap: flapAmp = 0.55 * (0.35 + 0.65*max(0, sin(t*0.23+glidePhase))) → glides periodically. wingRot = sin(t*flapSpeed + phase)*flapAmp. Also body bob.
+
+Clouds: group of spheres: geometry shared SphereGeometry(1, 12, 10); per cloud 5-7 meshes scaled (sx 3-7, sy 1-1.6, sz 2-3), positions clustered. Material: MeshStandardMaterial({color:#c9a8b8? dusk lavender, transparent:true, opacity:0.55, roughness:1, flatShading:false, depthWrite:false}). Lit by sun → warm edges. Drift: cloud.position.x += speed*dt; wrap at ±260. y 45-80. Also slight emissive #4a3a5a*? Keep emissive small 0.15 to lift them.
+
+Sun sprite: canvas radial gradient (white→orange→transparent), SpriteMaterial additive, scale 40, position sunDir*350, y ~ 30. Also a secondary wide glow sprite scale 120 opacity 0.35.
+
+Vignette overlay via CSS radial-gradient — polish. Also title caption? Small unobtrusive label bottom-left "Rocky Islet — Dusk" maybe. Keep minimal; user asked scene only. A tiny hint "drag to orbit" fading. I'll add subtle caption.
+
+AutoRotate: controls.autoRotate = true, speed 0.4; stop on user interaction? OrbitControls autoRotate continues after drag; fine, calm. Enable damping. minDistance 18, maxDistance 90, maxPolarAngle 1.45 (just above horizon), minPolarAngle 0.6? Allow looking from higher: min 0.35. target (0, 4, 0).
+
+Camera: fov 55, pos (34, 14, 38)? distance ~53. Sun direction (-0.5,0.1,-0.8): camera at (34,14,38) looks toward origin from +x+z quadrant; sun at -x-z → sunset in view. 
+
+Check beam sweep: beamGroup.rotation.y = t*0.35 (slow ~ 20s per revolution? 0.35 rad/s → 18s/rev — calm). Spot targets as children.
+
+Water uniform updates: uTime, uBeamDir (vec2 from beamGroup rotation: dir = (cos(rot), sin(rot))? Beam along +X rotated by rotation.y: world dir = (cos(-rot)?, ...). Rotation.y by θ maps +X to (cosθ, 0, -sinθ). So beamDirXZ = normalize(cosθ, -sinθ). Second beam opposite: (-cosθ, sinθ). Glint: use max alignment over both beams: align = max(pow(dot(d, b1),6), pow(dot(d,b2),6)) where d = normalize(wp.xz - lamp.xz), and dot clamped ≥0.
+
+Water fragment lighting: 
+- N = normalize(vNormal) (world).
+- V = normalize(cameraPosition - vWorldPos).
+- H_sun = normalize(V + uSunDir); spec_sun = pow(max(dot(N,H_sun),0), 240) * uSunSpecColor * 1.2. Sun low → glint path toward sun. 
+- fresnel = pow(1 - max(dot(N,V),0), 3) → mix base color with skyReflectColor.
+- base = mix(deepColor, shallowColor, waveH*0.5+0.5 * something) — shallow near shore: use foam distance too.
+- lamp glint: H_lamp = normalize(V + normalize(wp - lampPos)); spec = pow(max(dot(N,H_lamp),0), 300) * align * beamIntensity * lampColor. Beam hits water far from lamp mostly; align handles direction; also distance gate: gate = smoothstep(beamLen, beamLen*0.55, dist(lamp.xz, wp.xz))? Beam spreads downward from lamp at height 10.6 tilted ~5°: reaches water at horizontal distance ≈ 10.6/tan(5°) ≈ 121 — too far; tilt more: 12° → 50. Let's tilt beam down 0.22 rad (~12.6°) → water hit at ~ 10.6/0.22 ≈ 48. Beam length 70 covers. Gate: dist between 8 and 75. Also beam spot angle widens: radius at water ~ tan(spotAngle)*dist... fine.
+
+Also add moon? skip.
+
+Foam: 
+```
+float foam = 0.;
+for spots: d = length(wp.xz - spot.xy) - spot.z; f = smoothstep(2.2, 0.2, d); foam = max(foam, f);
+crest foam: cf = smoothstep(0.55, 0.9, vWaveH) * 0.6;
+foamTex noise: n = hash(floor(wp.xz*3)+time?) — animated foam: use sin-based noise: n = sin(wp.x*3.1 + uTime*1.5)*sin(wp.z*2.7 - uTime*1.2); foam *= 0.6+0.4*n;
+color = mix(color, foamColor(#e8e4da), foam*0.85 + cf*0.3);
+```
+Also foam alpha? Water opaque; foam color mix fine.
+
+Water edge near island: island radius ~9.5 at waterline (displaced sphere radius 8*1.3 max ≈ 10.4). Foam spot radius 10.5, band 2.2.
+
+Hash noise in GLSL:
+```
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f); return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+```
+Use noise for foam pattern: foam *= 0.5 + 0.5*noise(wp.xz*1.5 + uTime*0.3).
+
+Sky stars hash similar on vec3.
+
+Now, water geometry segments: 220x220 over 500 → 2.27 spacing; waves wavelength ~ 20-40 fine. 48k verts ok.
+
+Wave params: 4 waves: dirs (1,0.3), (0.7,-0.8), (-0.4,1), (0.2,0.9) normalized; freqs 0.12, 0.18, 0.28, 0.45 (rad per unit → wavelength 2π/f: 52, 35, 22, 14); amps 0.35, 0.28, 0.18, 0.10; speeds 0.9, 1.2, 1.6, 2.1. Total max height ~0.9. Calm rolling. 
+
+Normal analytic: dhdx = Σ amp*freq*dirX*cos(dot(p,dir)*freq + t*speed).
+
+Vertex shader computes vWorldPos = (pos.x, pos.y + h, pos.z) + mesh position (mesh at origin, so world = local). Pass worldNormal = normalize(vec3(-dhdx, 1, -dhdy)) where dy = dz local. Note: plane rotated via geometry.rotateX(-PI/2): original plane XY → after rotate, x stays x, y→z? rotateX(-90°): (x,y,0) → (x, 0, y)? Rotation X by -90°: y' = y cos(-90) - z sin(-90) = z*? Let's compute: rotX(θ): y' = y cosθ − z sinθ; z' = y sinθ + z cosθ. θ=-π/2: cos=0, sin=-1: y' = y*0 − z*(−1) = z = 0; z' = y*(−1) + 0 = −y. So (x, y, 0) → (x, 0, −y). So local z = −original y. Fine — plane now in XZ. Displace along local y (world y). Good.
+
+UVs for foam not needed.
+
+Also water should receive spotlight? ShaderMaterial doesn't receive three lights automatically — we do custom lighting; spotlight effect on water = our lamp glint. Islet/rocks/lighthouse/tower receive spotlight via standard materials — good, beam sweeping lights them when passing. SpotLight angle 0.14 narrow — tower lit only when beam points at it briefly — nice realism moment. Maybe widen angle 0.16, penumbra 0.6, intensity 2500, decay 1.4, distance 160.
+
+Also add subtle light on water from spot? Our glint covers it.
+
+Gulls receive directional light — white gulls warm-lit. Good.
+
+Renderer: antialias true, toneMapping ACESFilmic, exposure 1.15, outputColorSpace default. shadowMap? Shadows at dusk subtle — could enable for island/lighthouse: directional light shadows over water plane (ShaderMaterial won't receive shadows). Skip shadows — calm scene, fog softens. Actually lighthouse shadow on island would be nice but water can't receive; island can (standard material receiveShadow, dir light castShadow). Small benefit; skip for simplicity/perf? Enable: dirLight.castShadow with tight shadow camera around island (radius 20), island receiveShadow, lighthouse castShadow, rocks cast. Water custom shader no shadow — acceptable (beam glint dominates). I'll enable — polish. Shadow map 1024. Camera bounds ±18. bias -0.0005.
+
+Hmm, directional light from sun low angle → long shadows; shadow camera far must cover. Position light at sunDir*60, target island. Orthographic bounds ±20, near 10 far 140. OK.
+
+SpotLight castShadow? Could cast beam shadow — expensive & narrow; skip.
+
+Now gull wing geometry shared; body parts shared geometries; materials shared.
+
+Cloud material transparent + depthWrite false → sorting issues minimal.
+
+Sprite glow textures via canvas:
+```
+function makeGlowTexture(inner, outer){ canvas 128; radial gradient center inner color → transparent; }
+```
+Sun sprite texture: gradient stops: 0 'rgba(255,240,210,1)', 0.25 'rgba(255,180,110,0.8)', 0.6 'rgba(255,120,70,0.25)', 1 transparent.
+Lamp glow: 0 'rgba(255,230,180,1)', 0.4 'rgba(255,190,120,0.5)', 1 transparent.
+
+Sky sphere: SphereGeometry(380, 32, 24), BackSide shader.
+
+Sky shader:
+```glsl
+varying vec3 vDir;
+vertex: vDir = normalize(position); standard mvp.
+fragment:
+float h = normalize(vDir).y;
+vec3 col = mix(uHorizon, uZenith, pow(clamp(h,0.,1.), 0.55));
+below horizon: mix toward uBelow (dark sea haze) for h<0: col = mix(uHorizon, uBelow, clamp(-h*3.,0.,1.));
+sun: float s = max(dot(normalize(vDir), uSunDir), 0.);
+col += uSunGlow * pow(s, 6.) * 0.5;  // halo
+col += uSunCore * pow(s, 60.) * 1.2; // near disc
+disc: pow(s, 800.)*3.
+stars: if h>0.15: vec3 g = floor(normalize(vDir)*160.); float rnd = hash(g); star = step(0.997, rnd) * ... brightness = hash(g+1); twinkle = 0.6+0.4*sin(uTime*2.+rnd*60.); col += vec3(0.9,0.95,1.) * star * twinkle * smoothstep(0.15, 0.5, h) * 0.6;
+```
+Careful: hash on floor(dir*160) — dir components continuous; cells fine.
+
+Horizon color uniform: #8a5f7d? Dusk: horizon near sun warm but shader horizon uniform single color; sun glow adds warmth near sun. horizon #6e4a72 (mauve), zenith #141a33, below #1d2b3a, sunGlow #ff9a5c, sunCore #ffd9a8.
+
+Fog color should match horizon-ish: #4a3a5e? Fog over water blends water to fog color; choose #3f3355 (dusty purple). Water fragment fog: mix(color, uFogColor, fogFactor).
+
+Tone mapping applies to shader output too (ShaderMaterial output gets tone mapped? Yes — renderer tone mapping applies in final output for materials with toneMapped=true default). Colors will shift; tune by eye-ish, acceptable.
+
+Beam shader:
+```glsl
+varying vec2 vUv; varying vec3 vNormalW; varying vec3 vViewDir;
+alpha = pow(1.0 - vUv.y, 1.8) * 0.5; // uv.y: 0 at apex? ConeGeometry uv: v=0 at bottom? Need check: ConeGeometry (CylinderGeometry) uv.y = 0 at top? In CylinderGeometry, v goes 0 at top to 1 at bottom? Actually uv.y = 1 - y/height... Let me recall: CylinderGeometry generates uv.y = 1 - (y / height + 0.5)? torso: uv.y = 1 - v where v from top? In three's CylinderGeometry: `uvs.push( u, 1 - v )` with v = y/height... v=0 at top row (y=+h/2). So uv.y = 1 at top(apex), 0 at bottom(base). After translating geometry -h/2, apex at origin. uv.y=1 at apex → alpha should be max at apex: alpha = pow(vUv.y, 1.6)? Hmm wait apex uv.y=1, base uv.y=0. Beam brightest near source: alpha = pow(vUv.y, 2.0)*edge*intensity. But also fade very near apex to avoid blinding: alpha *= smoothstep(1.0, 0.92, vUv.y)? Minor.
+edge = pow(abs(dot(normalize(vNormalW), normalize(vViewDir))), 1.5);
+color uniform warm #ffdca8; additive blending, transparent, depthWrite false, side: DoubleSide.
+```
+vViewDir = cameraPosition - worldPos (in fragment, cameraPosition available).
+
+Beam length 70, radius end 6.5. Also add second inner brighter cone (radius 3.5) for core? Two cones per beam → 4 meshes. Nice depth. intensity 0.35 outer, 0.5 inner.
+
+Also faint "light column" upward? skip.
+
+Lighthouse lamp emissive + sprite glow + point light.
+
+Now gull paths: center around island (0,0), radii 14-30, heights 8-16, speeds 0.15-0.3 rad/s, some clockwise some ccw. 7 gulls. Also 2 distant gulls near sea stacks? fine same system.
+
+Gull scale ~1 (body length ~0.5). At distance 30 visible enough. Maybe scale 1.3.
+
+Clouds count 6, each 5 blobs → 30 meshes, fine.
+
+Sea stacks: 3 rocks: positions (20,-16), (-24, 12), (34, 26)? Ensure not blocking initial camera view much — camera at (34,14,38) looking at origin; rock at (34,26) is near camera line? Camera pos (34,14,38); rock (34,*,26) is between camera and island? Direction camera→origin passes through points t*(−34,−,−38)+cam: at t=0.3: (23.8, , 26.6) — rock at (34,26) is off that line (x=34 vs 23.8). OK. Move rock to (40, 30) farther. Fine.
+
+Also tiny boat? skip — keep calm.
+
+HTML structure: fullscreen canvas, CSS vignette overlay div, caption. Loading is module-only, no async assets → runs immediately.
+
+Write the code now, carefully checking three r170 APIs:
+- renderer.outputColorSpace = THREE.SRGBColorSpace (default already).
+- texture.colorSpace = THREE.SRGBColorSpace for canvas color texture.
+- OrbitControls import path.
+- SpotLight target: scene.add(light.target).
+- IcosahedronGeometry(radius, detail).
+- CapsuleGeometry exists.
+- flatShading in MeshStandardMaterial ok.
+- vertexColors: true with geometry.setAttribute('color', ...).
+
+Island vertex colors: need non-indexed? IcosahedronGeometry is indexed? In r170, IcosahedronGeometry (PolyhedronGeometry) is non-indexed? PolyhedronGeometry builds with position attribute non-indexed (it subdivides and duplicates vertices? It uses `setAttribute` with vertices array, no index — actually PolyhedronGeometry has no index; vertices duplicated per face). flatShading true → normals computed per-face anyway via computeVertexNormals? With flatShading, material uses derivative-based normals? No — flatShading in three uses computed flat normals? In WebGLRenderer, flatShading uses `normal` from... three implements flat shading by computing normals in shader via derivatives (FLAT_SHADED define uses dFdx). Yes: `#ifdef FLAT_SHADED` uses derivative normals. So vertex normals ignored; good for craggy.
+
+Displacement on non-indexed geometry: duplicated vertices at same position get same displacement (deterministic noise on position) → no cracks. 
+
+Island detail: IcosahedronGeometry(8, 4) → verts = 20*4^4*3? faces = 20*4^detail = 20*256=5120 faces, 15360 verts non-indexed. Fine. Use detail 3 (1280 faces) enough with flatShading? Craggy look wants facets; detail 3 good, detail 4 smoother. Choose 4 for silhouette smoothness with noise displacement — silhouette smoothness matters more. 5120 faces ok.
+
+Displacement function per vertex: p = position (radius 8 sphere). n = fbm(p*0.35). r = 8*(1+0.28*n). newp = p.normalized * r. Then y *= 0.55. Flatten top: if y > 2.4: y = 2.4 + (y-2.4)*0.12 + n2*0.25 where n2 = noise(p.xz*0.5). Also carve: maybe reduce radius near waterline for shoreline? fine.
+
+Colors per vertex (after displacement, using final y and noise):
+- base rock color vary: gray = 0.42+0.1*n → rgb(g*0.95, g*0.97, g*1.02) slight blue-gray.
+- wet: y<1.0 → mix toward dark #232a33 by smoothstep(1.0, 0.2, y).
+- grass: if y>2.3 and slope flat — without normals use noise mask: grassMask = smoothstep(2.3, 2.9, y) * smoothstep(0.2, 0.6, nGrass) where nGrass = noise(p.xz*0.8+7). grass color #55683c dusk olive, mix 0.8.
+Compute colors, set attribute.
+
+Sea stacks: same generator function makeRock(radius, detail, squash, seedOffset) with color variation; simpler colors (gray only, wet band). Reuse function with params.
+
+Boulders on top: 4 rocks radius 0.8-1.6 at plateau positions, gray.
+
+Lighthouse at (0, plateauY, 0). plateauY ≈ 2.4*0.55? Wait order: I displace sphere radius 8 → y max 8; then y *= 0.55 → 4.4; flatten threshold 2.4 applies after scaling? Let me reorder: displace, scale y, then flatten threshold 2.2: plateau y ≈ 2.2 + noise*0.2 → ~2.3. Then mesh.position.y = 1.4 → plateau ~3.7 world. Waterline: sphere y=0 at radius 8 → after scale still 0 → world 1.4?? That puts waterline crossing at sphere equator y=0 → world y 1.4 — island intersects water at its equator ring radius ~8*(1+n) — shoreline radius ~8-10 at world y 1.4?? That means island sticks 1.4 above water at equator — shoreline at y=0 occurs where sphere y = -1.4/0.55 = -2.5 → radius at that height: sqrt(64-6.25)=7.6 * (1+n*0.28) → ~7.6-10. Foam radius 10.5 ok. Island base underwater extends to y = -4.4+1.4 = -3. Good.
+
+Lighthouse base y = 3.6 (plateau ~3.5-3.9). Set lighthouse group position.y = 3.55. Tower base cylinder sits at 0. Lamp height: base 0.7 + tower 5.6 + balcony 0.2 + lamp room center ~ +1.0 → lamp y ≈ 3.55+0.7+5.6+0.2+0.9 ≈ 10.95. Beam group at (0, 10.9, 0).
+
+SpotLight position (0, 10.9, 0), targets children of beamGroup at (±65, -65*tan(0.22)≈-14.5? beam tilt 0.22 → drop over 65: 65*0.223≈14.5 → target y = 10.9-14.5 = -3.6 below water — fine for direction. Actually target defines direction only. Put target at (±65, -10, 0) local.
+
+Beam tilt: rotation.z = PI/2 - 0.22 for beam A (along +X tilted down). Beam B: rotation.y = PI then same z? If I set beamB.rotation.order... simpler: beamB = beamA.clone(); beamB.rotation.set(0, PI, PI/2 - 0.22)? Euler XYZ order: applies X then Y then Z? THREE Euler default order 'XYZ' means rotation applied as R = Rx * Ry * Rz? In three, Euler XYZ: quaternion setFromEuler applies in order X, Y, Z intrinsic? Three's Euler 'XYZ' → rotation matrix = Rz? Ugh. Avoid confusion: wrap beamB in its own group: beamGroupB.rotation.y = PI containing a mesh with rotation.z = tilt. Or: create function makeBeam() returning mesh with rotation.z = PI/2 - TILT (beam along +X down-tilted). beamB wrapper group rotation.y = PI. Both wrappers inside beamGroup. Spot targets: targetA child of wrapperA at (65,-10,0); targetB child of wrapperB at (65,-10,0) (wrapperB flips it to -X). 
+
+SpotLight itself: two spotlights positioned at lamp, targets = targetA/targetB. Add spotlights to scene (position absolute lamp). Targets in scene graph via wrappers (beamGroup child of scene at lamp pos). matrixWorld updates — yes.
+
+Beam sweep speed: 0.3 rad/s → period ~21s. Calm.
+
+Also rotate slowly the glow sprite? Sprite always faces camera, fine.
+
+Water lamp glint: uniform uBeamDirA vec2 = (cos(rotY), -sin(rotY))? Rotation.y θ maps +X → (cosθ, 0, -sinθ). Yes. And B = -A.
+
+Also modulate glint by beam being "on" constantly — fine.
+
+Extra polish: subtle camera bob? No — OrbitControls autoRotate enough.
+
+DPR clamp: min(devicePixelRatio, 2).
+
+Resize: update camera aspect, renderer size.
+
+Clock delta for animations; elapsed time.
+
+Let me also double check ConeGeometry uv: CylinderGeometry code: for torso rows, `uvs.push( u, 1 - v )` where v = y / heightSegments, y from 0 (top) to heightSegments (bottom)? In generateTorso: `for y in 0..heightSegments: v = y / heightSegments; ... uvs.push(u, 1 - v)`. Row y=0 is at top (radiusTop). So apex (top) uv.y = 1, base uv.y = 0. Confirmed: alpha = pow(vUv.y, k) brightest at apex. 
+
+But wait — after geometry.translate(0, -h/2, 0), uv unchanged. Apex at origin. Good.
+
+Beam cone openEnded: ConeGeometry(radius, height, radialSegments, heightSegments, openEnded=true). radialSegments 24, heightSegments 8? uv.y interpolation across heightSegments — need enough for smooth alpha gradient: heightSegments 16.
+
+Beam normals: cone side normals; with DoubleSide, abs(dot) handles backfaces.
+
+Beam shader vertex: vNormalW = normalMatrix * normal? normalMatrix is modelView normal; for world normal use mat3(modelMatrix) — in ShaderMaterial, modelMatrix available. vWorldPos = modelMatrix * position. vViewDir = cameraPosition - vWorldPos (fragment). Pass vNormalW = normalize(mat3(modelMatrix) * normal) — non-uniform scale none, fine.
+
+Beam color: warm #ffdcae, outer alpha 0.28, inner 0.45. Additive blending over sky/water — looks volumetric-ish. Also fade alpha with distance from camera? Additive beams far away could glow through fog — apply fog-ish fade: alpha *= exp(-dist*0.012)? Add manual: fogFactor = 1 - exp(-dist*0.015); alpha *= (1-fogFactor*0.8). Nice.
+
+Gull material: MeshStandardMaterial white, roughness 0.6. Wings double-sided.
+
+Now sky sun position uniform matches directional light dir and sun sprite pos.
+
+Sun elevation: sunDir = normalize(vec3(-0.55, 0.10, -0.75))? length = sqrt(0.3025+0.01+0.5625)=sqrt(0.875)=0.935 → normalized (-0.588, 0.107, -0.802). Elevation ~6°. Sun sprite at sunDir*360 → y≈38.5, x≈-212, z≈-289. Within sky sphere 380. Good.
+
+DirectionalLight position sunDir*80, intensity 1.6 color #ffb27a. Hemisphere: sky #5a4a7a, ground #1c2a3a, 0.55. Ambient #334, 0.15? Hemisphere covers.
+
+Exposure 1.1.
+
+Water colors: deep #14324e? dusk: deep #10283f, shallow #2a5a66, skyReflect #7a5f86 (mauve), sunSpec #ffb27a, foam #d8d4c8, fog #3f3355.
+
+Hmm fog color vs horizon: horizon mauve #6e4a72; fog slightly darker #463a5c. Water fades to fog — matches sky near horizon roughly. OK.
+
+Cloud color: #b98ba0 lit by sun → warm pink. opacity 0.5.
+
+Caption: bottom-left small text, font system-ui, color rgba(255,255,255,0.55): "Dusk over the islet — drag to orbit". Fade after 6s? Keep static subtle.
+
+Vignette: position fixed inset 0, pointer-events none, background radial-gradient(ellipse at center, transparent 55%, rgba(10,8,20,0.45) 100%).
+
+Now write everything. Also handle context: module script at end of body.
+
+Gull construction function:
+
+```js
+function makeGull(){
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(gullBodyGeo, gullMat); // sphere scaled via geometry.scale
+  ...
+}
+```
+Pre-scale geometries once: bodyGeo = SphereGeometry(0.16,10,8); bodyGeo.scale(0.75,0.6,1.7). headGeo sphere 0.095 at (0,0.05,0.30). beakGeo = ConeGeometry(0.03,0.12,6) rotateX(PI/2) → points +Z? Cone points +Y; rotateX(PI/2): +Y→+Z? rotX(90°): y'=−z? point (0,h,0) → y' = h*cos90 − 0 = 0; z' = h*sin90 = h → +Z. Yes rotateX(PI/2) makes cone point +Z. Position (0,0.06,0.40). Color orange #d98a4a.
+tailGeo = ConeGeometry(0.07, 0.22, 6) rotateX(-PI/2) points −Z, scale z? flatten: scale(1, 0.4, 1) after rotate? Tail at (0, 0.02, -0.30).
+wings: wingGeoR = PlaneGeometry(1.05, 0.3); translate(0.55, 0, 0); rotateX(-PI/2). WingL: translate(-0.55,0,0) then rotateX(-PI/2) — after translate x=-0.55, rotateX keeps x. Wing meshes at (±0.06, 0.05, 0.05). rotation.z flap. Wing tip droop: add slight rotation.x? skip.
+
+Gull scale 1.4.
+
+Flight update per gull:
+```
+const a = g.phase + t * g.speed * g.dir;
+const px = Math.cos(a)*g.r, pz = Math.sin(a)*g.r;
+const py = g.h + Math.sin(t*0.6 + g.phase*3)*1.4;
+// velocity dir: tangent = (-sin(a)*dir, cos(a)) in xz
+gull.position.set(px, py, pz);
+const vx = -Math.sin(a)*g.dir, vz = Math.cos(a)*g.dir;
+gull.rotation.y = Math.atan2(vx, vz);
+// bank: rotation.z = -g.dir * 0.25 (into turn) — after yaw with default order fine-ish
+gull.rotation.z = g.dir * 0.22;
+// pitch small
+gull.rotation.x = 0.05*Math.sin(t*0.7+g.phase);
+// flap
+const glide = 0.25 + 0.75*Math.max(0, Math.sin(t*0.21 + g.glide));
+const flap = Math.sin(t*g.flapSpeed + g.phase) * 0.6 * glide;
+wingR.rotation.z = flap; wingL.rotation.z = -flap;
+```
+Wait banking sign: turning left (dir=+1 ccw) bank left — roll around forward axis. rotation.z with order XYZ applied... visually either sign ok; pick g.dir*0.2.
+
+Also gulls should sometimes be near lighthouse beam — fine.
+
+Clouds update: x += drift*dt; if x > 280 → x = -280.
+
+Water uniforms update: uTime, uBeamA, uBeamB.
+
+BeamGroup.rotation.y = t * 0.3.
+
+Spotlight intensity: with decay ~1.5 and distance 160: intensity 2500 gives at 30m: 2500/30^1.5 ≈ 2500/164 ≈ 15 — bright. At 60m: 2500/465 ≈ 5.4. OK visible on rocks when sweeping. Maybe 3500. Tune 3000.
+
+PointLight lamp: intensity 20, distance 25, decay 1.8, color #ffc27a.
+
+Also small emissive on lamp glass.
+
+Shadow: dirLight.castShadow = true; shadow.camera left/right/top/bottom ±22, near 20, far 160, mapSize 1024, bias -0.0004, normalBias 0.02? Set both. Island receiveShadow true; lighthouse parts castShadow true; rocks cast; gulls cast? tiny, skip. Water no receive (custom shader). Clouds no.
+
+Shadow camera position: light.position = sunDir*80; light.target at (0,3,0) added to scene.
+
+Now foam spots uniform: `uFoamSpots: { value: [new Vector4(0,0,10.5,1), new Vector4(20,-16,3.2,0.8), new Vector4(-24,12,2.6,0.7), new Vector4(40,30,2.2,0.6)] }` — GLSL: uniform vec4 uFoamSpots[4]; loop constant 4.
+
+Sea stack positions match: (20,-16) etc. Rock generator radius 2.2, squash 0.9, height: radius 2.2 sphere displaced scale y 0.9 → height ±~2.5; position.y = 0.5 → top ~3, above water. Make radius 2.6 → top ~3.5. Stack 2: radius 2.0 at (-24,12), y 0.3. Stack3: radius 1.7 at (40,30), y 0.2.
+
+Foam radius around stacks: rock radius at waterline ~ radius*(1+0.28n)*... ~2.6*1.2=3.1 → foam spot radius 3.4 band. Set values: (20,-16,3.6), (-24,12,3.0), (40,30,2.6). Island 10.8.
+
+Water plane size 500 — fog far 280; beyond fog fully fogged → blends to fog color; sky below horizon color should match fog color-ish to hide edge: uBelow = fog color. Good.
+
+Camera far 900.
+
+Let me now also consider: water shader `cameraPosition` uniform — available in both stages for ShaderMaterial (three injects common uniforms including cameraPosition in vertex; in fragment, cameraPosition is declared? three declares `uniform vec3 cameraPosition;` in fragment prefix for ShaderMaterial? The fragment shader prefix includes cameraPosition — yes, WebGLProgram adds `uniform vec3 cameraPosition;` to fragment prefix always. Confirmed.
+
+Write sky stars hash:
+```glsl
+float hash3(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,45.164)))*43758.5453); }
+```
+Stars: 
+```glsl
+vec3 d = normalize(vDir);
+if(d.y > 0.12){
+  vec3 cell = floor(d * 220.0);
+  float h = hash3(cell);
+  float star = smoothstep(0.995, 1.0, h);
+  float tw = 0.5 + 0.5*sin(uTime*2.0 + h*80.0);
+  col += vec3(0.8,0.85,1.0) * star * tw * smoothstep(0.12, 0.45, d.y) * 0.5;
+}
+```
+Star brightness variation: multiply by hash3(cell+7.7).
+
+Water vertex shader waves — write:
+
+```glsl
+uniform float uTime;
+varying vec3 vWorldPos;
+varying vec3 vNormal;
+varying float vCrest;
+
+void main(){
+  vec3 p = position;
+  vec2 xz = p.xz;
+  float h = 0.0; float dhx = 0.0; float dhz = 0.0;
+  // wave 1..4
+  ...
+}
+```
+Unroll manually with const arrays? GLSL ES 3.0 (WebGL2 default in three) allows loops with const arrays. three ShaderMaterial defaults to GLSL1 unless glslVersion set — WebGL2 renderer compiles GLSL1 shaders fine (translated). Loops with constant bounds ok in GLSL1. Arrays with const initializer ok in GLSL ES 1.0? Const arrays supported in GLSL ES 1.00? Array constructors `float[4](...)` not in ES 1.00. Safer: unroll 4 waves manually. Fine.
+
+```glsl
+vec2 d1 = vec2(0.94, 0.34); float f1=0.11, a1=0.34, s1=0.85;
+vec2 d2 = vec2(0.62,-0.78); f2=0.17, a2=0.26, s2=1.15;
+vec2 d3 = vec2(-0.38,0.92); f3=0.26, a3=0.16, s3=1.55;
+vec2 d4 = vec2(0.16,0.99); f4=0.42, a4=0.09, s4=2.1;
+float p1 = dot(xz,d1)*f1 + uTime*s1; ...
+h = a1*sin(p1)+...
+dhx += a*f*dir.x*cos(p)...
+vCrest = h / (a1+a2+a3+a4) * 0.5 + 0.5;
+p.y += h;
+vNormal = normalize(vec3(-dhx, 1.0, -dhz));
+vWorldPos = p; // mesh at origin
+gl_Position = projectionMatrix * modelViewMatrix * vec4(p,1.0);
+```
+Directions should be normalized: (0.94,0.34) len=1.0006 ok; (0.62,-0.78) len=0.997; (-0.38,0.92) len=0.994; (0.16,0.99) len=1.003. Close enough.
+
+Fragment:
+
+```glsl
+uniform vec3 uDeep, uShallow, uSky, uSunDir, uSunSpec, uFoamColor, uFogColor, uLampPos, uLampColor;
+uniform vec2 uBeamA, uBeamB;
+uniform vec4 uFoamSpots[4];
+uniform float uTime, uFogNear, uFogFar;
+varying...
+
+void main(){
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(cameraPosition - vWorldPos);
+  vec3 base = mix(uDeep, uShallow, vCrest*0.35);
+  float fres = pow(1.0 - max(dot(N,V),0.0), 3.0);
+  vec3 col = mix(base, uSky, fres*0.75);
+  // sun glint
+  vec3 Hs = normalize(V + uSunDir);
+  float spec = pow(max(dot(N,Hs),0.0), 260.0);
+  col += uSunSpec * spec * 1.4;
+  // broad sun sheen
+  col += uSunSpec * pow(max(dot(N,Hs),0.0), 24.0) * 0.12;
+  // lamp beam glint
+  vec2 toFrag = vWorldPos.xz - uLampPos.xz;
+  float distL = length(toFrag);
+  vec2 dirF = toFrag / max(distL, 0.001);
+  float align = max(pow(max(dot(dirF, uBeamA),0.0), 10.0), pow(max(dot(dirF, uBeamB),0.0), 10.0));
+  float gate = smoothstep(6.0, 14.0, distL) * (1.0 - smoothstep(60.0, 78.0, distL));
+  vec3 Hl = normalize(V + normalize(vWorldPos - uLampPos));
+  float specL = pow(max(dot(N,Hl),0.0), 320.0);
+  col += uLampColor * specL * align * gate * 3.0;
+  // foam
+  float foam = 0.0;
+  for(int i=0;i<4;i++){
+    vec4 s = uFoamSpots[i];
+    float d = length(vWorldPos.xz - s.xy) - s.z;
+    foam = max(foam, (1.0 - smoothstep(0.0, 2.4, d)) * s.w);
+  }
+  float n = noise(vWorldPos.xz*1.4 + vec2(uTime*0.25, -uTime*0.2));
+  foam *= 0.55 + 0.45*n;
+  float crestFoam = smoothstep(0.72, 0.95, vCrest) * 0.25;
+  float foamAmt = clamp(foam*0.9 + crestFoam, 0.0, 1.0);
+  col = mix(col, uFoamColor, foamAmt);
+  // fog
+  float dist = length(cameraPosition - vWorldPos);
+  float fogF = smoothstep(uFogNear, uFogFar, dist);
+  col = mix(col, uFogColor, fogF);
+  gl_FragColor = vec4(col, 1.0);
+}
+```
+Note: foam near island where water is under island — island mesh covers it (island above water there). Water at island radius is at y=0 plane; island shoreline intersects — water plane under island hidden by island geometry. Foam ring visible just outside shoreline. Good.
+
+Also waves near island should maybe calm — skip.
+
+noise() function define in fragment.
+
+Beam shader:
+
+```glsl
+// vertex
+varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+vUv = uv; vN = normalize(mat3(modelMatrix) * normal); vW = (modelMatrix * vec4(position,1.0)).xyz;
+gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
+// fragment
+uniform vec3 uColor; uniform float uIntensity; uniform vec3 uFogColor;
+float edge = pow(abs(dot(normalize(vN), normalize(cameraPosition - vW))), 1.6);
+float len = pow(vUv.y, 1.7);
+float dist = length(cameraPosition - vW);
+float fogF = 1.0 - exp(-dist * 0.02);
+float a = uIntensity * edge * len * (1.0 - fogF*0.85);
+// soft near source
+a *= smoothstep(1.0, 0.96, vUv.y) ... hmm uv.y=1 at apex; smoothstep(1.0,0.96,x) is 0 at x=1, 1 at ≤0.96 — fades very tip. ok small.
+gl_FragColor = vec4(uColor, a);
+```
+Additive blending: color multiplied by alpha effectively (blending: src alpha * src color? Additive blending in three: blendSrc = SrcAlphaFactor, blendDst = OneFactor → output = src.rgb * src.a + dst. So alpha scales contribution. Good.
+
+Beam mesh renderOrder high (after water) — additive with depthWrite false, depthTest true. renderOrder: water 0, beams 5, sprites 6, clouds 4? Clouds transparent normal blending render before beams fine.
+
+Sky sphere renderOrder -1, depthWrite false? Sky at 380 within far; draw normally with depthWrite false and renderOrder -1 to be background. Material side BackSide, depthWrite false. Fine.
+
+Sun sprites additive renderOrder 7.
+
+Now island generation code:
+
+```js
+function fbm(x, y, z){
+  return Math.sin(x*1.31 + y*2.17 + z*1.73)*0.5
+       + Math.sin(x*3.07 + z*2.71 + y*1.93)*0.3
+       + Math.sin(y*4.31 + x*2.89 + z*0.97)*0.2;
+}
+function makeIsland(){
+  const geo = new THREE.IcosahedronGeometry(8, 4);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count*3);
+  const v = new THREE.Vector3();
+  for(i...){
+    v.fromBufferAttribute(pos, i);
+    const n = fbm(v.x*0.35+3.1, v.y*0.35, v.z*0.35);
+    const r = 8 * (1 + 0.30*n);
+    v.normalize().multiplyScalar(r);
+    v.y *= 0.55;
+    if(v.y > 2.2){ const m = (v.y-2.2)*0.12; v.y = 2.2 + m + fbm(v.x*0.5, 7.7, v.z*0.5)*0.18; }
+    pos.setXYZ(i, v.x, v.y, v.z);
+    // color
+    const g = 0.40 + 0.10*fbm(v.x*0.8, v.y*0.8, v.z*0.8);
+    let rC = g*0.92, gC = g*0.95, bC = g*1.05;
+    // wet band
+    const wet = smoothstepJS(1.1, 0.1, v.y); // 1 below 0.1
+    rC = lerp(rC, 0.13, wet*0.8); ...
+    // grass
+    const gn = fbm(v.x*0.6+11, 0, v.z*0.6);
+    const grass = smoothstepJS(2.2, 2.8, v.y) * smoothstepJS(0.1, 0.45, gn);
+    mix toward (0.32, 0.40, 0.22) by grass*0.85
+    colors...
+  }
+  geo.setAttribute('color', BufferAttribute(colors,3));
+  geo.computeVertexNormals();
+  const mat = MeshStandardMaterial({vertexColors:true, roughness:0.95, metalness:0, flatShading:true});
+  mesh position.y = 1.4; receiveShadow = true;
+}
+```
+smoothstepJS(a,b,x) with a>b reversed — implement generic: 
+```js
+function sstep(e0,e1,x){ const t = Math.min(Math.max((x-e0)/(e1-e0),0),1); return t*t*(3-2*t); }
+```
+wet = 1 - sstep(0.1, 1.1, y).
+
+Sea stack generator similar with own seed offset and colors gray only + wet band, radius param, squash param, detail 2.
+
+Boulders: radius 0.7-1.4, detail 1, gray colors, positions on plateau: (2.5, 3.6, 1.5), (-2.8, 3.55, -1), (1.2, 3.62, -3.2), (-1.5,3.6,2.6). y = plateau ~3.55 + rock radius*0.3. Just place y=3.7 partially sunk.
+
+Lighthouse group:
+```js
+const lh = new THREE.Group(); lh.position.set(0, 3.5, 0);
+base: CylinderGeometry(2.0, 2.4, 0.8, 20) stone gray #8a8578, y 0.4
+tower: CylinderGeometry(1.05, 1.55, 5.6, 24, 1) with stripe texture, y 0.8+2.8=3.6
+balcony: CylinderGeometry(1.45, 1.45, 0.18, 24) dark #2f2b2b, y 6.4+0.09 → tower top at 0.8+5.6=6.4; balcony y 6.49
+rail: TorusGeometry(1.45, 0.05, 8, 24) rotateX(PI/2) at y 6.75? optional — add, dark.
+lamp room: CylinderGeometry(0.95, 0.95, 1.15, 16) glass emissive, y 6.58+0.575=7.15? balcony top 6.58; lamp room center y 6.58+0.575 ≈ 7.16.
+roof: ConeGeometry(1.2, 1.0, 20) red #9e3d34, y 7.74+0.5=8.24? lamp room top 7.74; roof center 8.24.
+finial: small sphere 0.12 at 8.8.
+lamp glow sprite at y 7.16 scale 5.
+point light at y 7.16.
+```
+Lamp world y = 3.5 + 7.16 = 10.66. Beam group y = 10.66.
+
+Tower stripes canvas: width 64, height 256; bands: 6 bands each ~42.7px: alternate '#e9e4d8' and '#b8442f'. Add subtle vertical gradient shading? Add slight noise streaks: skip, clean bands. Also top band white. texture.wrapS = RepeatWrapping, repeat.x = 1. anisotropy 4. colorSpace SRGB.
+
+Tower material roughness 0.75.
+
+castShadow on tower/base/rocks; island receiveShadow; lighthouse castShadow true each mesh.
+
+Gull material: MeshStandardMaterial({color:#e9e7e0, roughness:0.55}); wingMat slightly darker #d8d6cc, side DoubleSide; beakMat #d98a4a.
+
+Gull count 7 with params:
+```
+[{r:16,h:9,speed:0.28,dir:1,phase:0,flap:9,glide:0},
+ {r:20,h:12,speed:0.22,dir:-1,phase:2,flap:8,glide:2},
+ {r:24,h:10,speed:0.18,dir:1,phase:4,flap:10,glide:4},
+ {r:14,h:14,speed:0.3,dir:-1,phase:1,flap:11,glide:1},
+ {r:30,h:15,speed:0.15,dir:1,phase:3,flap:7,glide:5},
+ {r:18,h:8,speed:0.26,dir:-1,phase:5,flap:10,glide:3},
+ {r:36,h:18,speed:0.12,dir:1,phase:0.5,flap:8,glide:6}]
+```
+Scale 1.2-1.5 random-ish fixed.
+
+Clouds: 6 groups at angles around, radius 90-200, y 42-70. Each: 5-7 blobs. drift speed 1.2-2.0 units/s along +x with wrap ±280. Blob material shared. Cloud blob geometry SphereGeometry(1, 14, 10). Per blob scale set. opacity 0.5, transparent, depthWrite false, roughness 1, color #caa3b5, emissive #3a2f45, emissiveIntensity 0.4? Emissive lifts dusk clouds subtly. flatShading false.
+
+Hmm clouds with standard material + fog → nice.
+
+Sun sprite: two sprites (core scale 30, halo scale 90 opacity 0.5). SpriteMaterial({map, blending:Additive, depthWrite:false, transparent:true}).
+
+Lamp glow sprite scale 4.5, opacity 0.9.
+
+Also add a subtle red/white navigation light? skip.
+
+Controls: OrbitControls(camera, renderer.domElement); enableDamping; autoRotate true speed 0.35; target (0,4,0); minDistance 20 maxDistance 110; maxPolarAngle 1.48; minPolarAngle 0.3; enablePan false.
+
+Camera initial (36, 15, 40)? distance ~55. fov 55.
+
+Animation loop: dt = clock.getDelta(); t = clock.elapsedTime. Update uniforms, beam rotation, gulls, clouds, controls.update(), renderer.render.
+
+Beam rotation: beamGroup.rotation.y = t*0.3; compute beam dirs: θ = t*0.3; dirA = (cos θ, -sin θ); dirB = (-cos θ, sin θ). Set uniforms.
+
+Wait — rotation.y θ maps +X to (cosθ, 0, −sinθ)? Rotation about Y: x' = x cosθ + z sinθ; z' = −x sinθ + z cosθ. Point (1,0,0) → (cosθ, 0, −sinθ). Yes.
+
+Spot targets: wrapperA at beamGroup child, contains mesh beamA (rotation.z = PI/2 − TILT) and targetA at (70, −70*tan(TILT)... just (70, −12, 0)). wrapperB rotation.y = PI contains beamB mesh same rotation.z and targetB at (70,−12,0) → world −X direction. SpotLights: spotA.target = targetA; spotB.target = targetB. Both spotlights position = lamp world pos (0, 10.66, 0) — add to scene (not beamGroup, to keep position fixed regardless).
+
+Spot angle 0.16, penumbra 0.55, decay 1.4, distance 170, intensity 3200, color #ffd9a8.
+
+Check spotlight effect on tower when beam points away — tower lit by point lamp light always (warm glow near top). Good.
+
+One more polish: gentle "light house keeper" — no. Keep.
+
+Water plane: also add slight opacity? Opaque fine.
+
+Edge case: WebGL2 required for three r170? three r170 works with WebGL2 (default) and falls back? r163+ WebGL1 deprecated — WebGLRenderer requires WebGL2 in r163+? Actually WebGL1 support removed in r163. Modern browsers fine.
+
+Now assemble HTML. Also `<meta viewport>`. Title "Dusk Islet".
+
+CSS: body margin 0 overflow hidden background #141a33 (pre-render bg). canvas block. vignette div. caption div.
+
+Caption: "Rocky Islet · Dusk — drag to orbit, scroll to zoom". small, bottom left, fade-in animation.
+
+Let me write final code, being careful with shader strings and JS.
+
+Also remember: ShaderMaterial fog uniforms manual — fine.
+
+Water geometry: PlaneGeometry(520, 520, 220, 220); rotateX(-PI/2). 220² = 48400 verts, 96k tris — ok.
+
+Sky: SphereGeometry(380, 40, 24).
+
+Check sky shader below-horizon: water covers up to 520/2=260 radius; sky sphere 380 → below-horizon sky visible beyond water edge (260 < 380) — region between water edge and sky at horizon: fogged water ends at fog far 280 fully fog color; sky below horizon uniform uBelow = fog color → seamless. Set uBelow = uFogColor. 
+
+Also water plane corner distance: camera at ~55 from center; water extends 260 → far corner ~315 > fogFar 280 fully fogged. Good.
+
+Sun sprite position: sunDir*355: (-208, 38, -285) — inside sky sphere (380). Sprite scale 34 core, 110 halo. Halo might intersect sky sphere visually — additive, fine.
+
+Directional light: position sunDir*90 = (-53, 9.6, -72), target (0,3,0). Shadow camera: with light 90 away, ortho near 40 far 160, bounds ±25. Island radius 10 + lighthouse height 9 → shadow camera up/down ±25 covers. mapSize 1024.
+
+Gulls castShadow? skip (tiny, costly). Clouds no.
+
+Renderer shadowMap.type = PCFSoftShadowMap.
+
+Now gull wing flap rotation axis: wings extend along ±X; flap rotates around Z (forward axis) — wingR.rotation.z = flap lifts +X wing up when flap>0? Rotation z positive rotates +X toward +Y — yes up. WingL extends −X: rotation.z = −flap lifts −X up? Rotation z by −flap rotates −X toward +Y? Point (−1,0,0) rotated by z angle −f: x' = −cos f, y' = −(−sin f)?? Compute: rotZ(θ): x' = x cosθ − y sinθ; y' = x sinθ + y cosθ. θ=−f, point (−1,0): x' = −cos f; y' = (−1)(sin(−f)) = sin f >0. Yes up. 
+
+Gull body forward +Z, yaw = atan2(vx, vz) — for velocity (vx,vz), yaw such that +Z aligns: rotation.y = atan2(vx, vz) correct (three: object +Z forward when yaw=atan2(x,z)).
+
+Bank: rotation.z = dir * 0.18 — with Euler XYZ order, rotations apply... three Euler XYZ intrinsic order: R = Rx Ry Rz? Actually three's Euler 'XYZ' composes as quaternion = qx * qy * qz? In three, setFromEuler XYZ applies X first then Y then Z in intrinsic? The matrix is computed as if extrinsic Z then Y then X... For small angles it hardly matters. Fine.
+
+Gull vertical bob included in py.
+
+Also gulls' wing flap when gliding: glide factor reduces amplitude; also wings could flatten — rotation.z small enough.
+
+Now foam noise function in GLSL:
+
+```glsl
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float noise(vec2 p){
+  vec2 i = floor(p); vec2 f = fract(p);
+  vec2 u = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i), hash(i+vec2(1.0,0.0)), u.x),
+             mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), u.x), u.y);
+}
+```
+
+Sky hash3 similar.
+
+Uniform vec4 array in ShaderMaterial: `uFoamSpots: { value: [v4, v4, v4, v4] }` — three supports arrays of Vector4 for vec4[4]. Yes.
+
+Write the full file now. Also ensure `type="module"` script after importmap.
+
+Beam cone geometry: ConeGeometry(6.5, 70, 24, 16, true); translate(0, -35, 0) → apex at 0? Cone apex at +h/2 = +35; translate y −35 → apex at 0, base at −70. rotation.z = PI/2 − 0.22: base (0,−70,0) → x' = −(−70) sin(θ)... rotZ(θ) with θ = PI/2−0.22: point (0,−70,0): x' = x cosθ − y sinθ = 70 sinθ ≈ 70*0.976 = 68.3; y' = x sinθ + y cosθ = −70 cosθ = −70*0.218 = −15.3. Beam reaches (68, −15) from lamp at 10.66 → world y −4.6 at end — passes through water plane around x where y=0: y = 10.66 − x*tan(0.22) → x ≈ 47. Beam length covers to 68 horizontal. Gate in shader 6..78 ok. Beam end below water — cone continues underwater, invisible-ish (additive over water color, subtle). Could shorten to 55: end (53.7, −11.9) → world y −1.2 still slightly under. Length 50: (48.8, −10.9) world −0.2 ≈ waterline. Use length 52, radius end 5.5. Inner cone radius 2.6 length 52.
+
+Spot target at (52, −11, 0) local.
+
+Beam alpha: outer 0.22, inner 0.35. With additive over bright sky near sun might be subtle — fine, dusk sky dark enough.
+
+Also beam should illuminate water surface within its footprint — our glint handles.
+
+One more: lighthouse lamp room glass — MeshStandardMaterial emissive #ffcf8e intensity 2.4, color #fff2dd, transparent true opacity 0.85, roughness 0.4. With tone mapping, emissive 2.4 glows warm.
+
+PointLight (0, 7.16, 0) inside lamp room — light leaks through glass (no shadows) → warm pool on balcony/tower top. intensity 25 distance 30 decay 1.8.
+
+Also tiny red beacon on roof? skip.
+
+Island grass color dusk-muted: (0.30, 0.38, 0.20).
+
+Rock color base gray g≈0.4-0.5 → rgb ~ (0.37-0.46, ..., ...) — with ACES will darken; maybe raise: g = 0.45 + 0.12*n. Wet dark (0.16, 0.18, 0.20).
+
+Sea stack colors similar.
+
+Boulder color #6a6e74 via material (no vertex colors needed) — use same rock material? Make separate simple material gray flatShading.
+
+Let me now also double-check OrbitControls autoRotate with damping: call controls.update() each frame — yes.
+
+Prevent context menu? not needed.
+
+Write HTML:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Rocky Islet at Dusk</title>
+<style>...</style>
+<script type="importmap">...</script>
+</head>
+<body>
+<div id="vignette"></div>
+<div id="caption">...</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+... everything ...
+</script>
+</body>
+</html>
+```
+
+Renderer appended to body (before overlays? overlays are fixed with z-index; append canvas first then overlays on top via z-index). Set canvas position fixed inset 0.
+
+Now write JS in full. I'll be careful about details.
+
+```js
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+```
+
+Scene, fog:
+```js
+const scene = new THREE.Scene();
+const FOG_COLOR = new THREE.Color(0x463a5c);
+scene.fog = new THREE.Fog(FOG_COLOR, 55, 280);
+```
+
+Camera:
+```js
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 900);
+camera.position.set(36, 15, 41);
+```
+
+Lights:
+```js
+const SUN_DIR = new THREE.Vector3(-0.55, 0.10, -0.75).normalize();
+const sunLight = new THREE.DirectionalLight(0xffb27a, 1.7);
+sunLight.position.copy(SUN_DIR).multiplyScalar(90);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(1024, 1024);
+sunLight.shadow.camera.left = -25; ... right 25 top 25 bottom -25 near 40 far 170;
+sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.03;
+scene.add(sunLight, sunLight.target);
+sunLight.target.position.set(0, 3, 0);
+const hemi = new THREE.HemisphereLight(0x5a4a7a, 0x1c2a3a, 0.55);
+scene.add(hemi);
+```
+
+Sky:
+```js
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false,
+  uniforms: {
+    uTime: {value:0},
+    uHorizon: {value: new THREE.Color(0x6e4a72)},
+    uZenith: {value: new THREE.Color(0x141a33)},
+    uBelow: {value: FOG_COLOR.clone()},
+    uSunDir: {value: SUN_DIR},
+    uSunGlow: {value: new THREE.Color(0xff9a5c)},
+    uSunCore: {value: new THREE.Color(0xffd9a8)},
+  },
+  vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `...`
+});
+const sky = new THREE.Mesh(new THREE.SphereGeometry(380, 40, 24), skyMat);
+sky.renderOrder = -1;
+scene.add(sky);
+```
+vDir = position normalized in fragment.
+
+Sky fragment:
+```glsl
+uniform float uTime;
+uniform vec3 uHorizon, uZenith, uBelow, uSunDir, uSunGlow, uSunCore;
+varying vec3 vDir;
+float hash3(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,45.164)))*43758.5453); }
+void main(){
+  vec3 d = normalize(vDir);
+  float h = d.y;
+  vec3 col;
+  if(h >= 0.0){
+    col = mix(uHorizon, uZenith, pow(clamp(h,0.0,1.0), 0.55));
+  } else {
+    col = mix(uHorizon, uBelow, clamp(-h*4.0, 0.0, 1.0));
+  }
+  float s = max(dot(d, uSunDir), 0.0);
+  col += uSunGlow * pow(s, 5.0) * 0.45;
+  col += uSunCore * pow(s, 40.0) * 0.9;
+  col += uSunCore * pow(s, 900.0) * 2.2;
+  if(h > 0.10){
+    vec3 cell = floor(d * 230.0);
+    float rnd = hash3(cell);
+    float star = smoothstep(0.994, 1.0, rnd);
+    float bright = hash3(cell + 7.7);
+    float tw = 0.55 + 0.45 * sin(uTime * 2.0 + rnd * 90.0);
+    col += vec3(0.75, 0.82, 1.0) * star * bright * tw * smoothstep(0.10, 0.45, h) * 0.55;
+  }
+  gl_FragColor = vec4(col, 1.0);
+}
+```
+Note: pow(s, 900.0) — s<1 fine; s=1 exactly at sun dir → 1. ok.
+
+Water:
+
+```js
+const waterUniforms = {
+  uTime: {value: 0},
+  uDeep: {value: new THREE.Color(0x10283f)},
+  uShallow: {value: new THREE.Color(0x2a5a66)},
+  uSky: {value: new THREE.Color(0x7a5f86)},
+  uSunDir: {value: SUN_DIR},
+  uSunSpec: {value: new THREE.Color(0xffb27a)},
+  uFoamColor: {value: new THREE.Color(0xd9d5c9)},
+  uFogColor: {value: FOG_COLOR.clone()},
+  uFogNear: {value: 55}, uFogFar: {value: 280},
+  uLampPos: {value: new THREE.Vector3(0, LAMP_Y, 0)},
+  uLampColor: {value: new THREE.Color(0xffc27a)},
+  uBeamA: {value: new THREE.Vector2(1, 0)},
+  uBeamB: {value: new THREE.Vector2(-1, 0)},
+  uFoamSpots: {value: [new THREE.Vector4(0,0,10.8,1.0), new THREE.Vector4(20,-16,3.6,0.85), new THREE.Vector4(-24,12,3.0,0.75), new THREE.Vector4(40,30,2.6,0.6)]},
+};
+```
+LAMP_Y constant defined before: 10.66.
+
+Water shaders as planned.
+
+Water mesh:
+```js
+const waterGeo = new THREE.PlaneGeometry(520, 520, 220, 220);
+waterGeo.rotateX(-Math.PI/2);
+const water = new THREE.Mesh(waterGeo, waterMat);
+scene.add(water);
+```
+
+Island, stacks, boulders, lighthouse, beams, gulls, clouds, sprites.
+
+Beam material shader shared with per-mesh uniforms intensity — create two materials (outer/inner) or clone with own uniforms. ShaderMaterial uniforms per material instance — make function beamMaterial(intensity).
+
+Beam mesh renderOrder = 6.
+
+Glow sprites:
+```js
+function radialTexture(stops){
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64,64,0,64,64,64);
+  for(const [o, col] of stops) g.addColorStop(o, col);
+  ctx.fillStyle = g; ctx.fillRect(0,0,128,128);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+```
+
+Sun sprites at SUN_DIR*355.
+
+Stripe texture:
+```js
+function stripeTexture(){
+  const c = document.createElement('canvas'); c.width = 64; c.height = 256;
+  const ctx = c.getContext('2d');
+  const bands = 6;
+  for(let i=0;i<bands;i++){
+    ctx.fillStyle = i%2===0 ? '#e9e4d8' : '#b8442f';
+    ctx.fillRect(0, i*256/bands, 64, 256/bands+1);
+  }
+  // subtle vertical shading
+  const g = ctx.createLinearGradient(0,0,64,0);
+  g.addColorStop(0,'rgba(0,0,0,0.18)'); g.addColorStop(0.5,'rgba(255,255,255,0.06)'); g.addColorStop(1,'rgba(0,0,0,0.18)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,64,256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  return tex;
+}
+```
+
+Lighthouse build with meshes; castShadow true.
+
+Beam group:
+```js
+const beamGroup = new THREE.Group();
+beamGroup.position.set(0, LAMP_Y, 0);
+scene.add(beamGroup);
+const TILT = 0.22;
+function makeBeamCone(radius, intensity){
+  const geo = new THREE.ConeGeometry(radius, BEAM_LEN, 24, 16, true);
+  geo.translate(0, -BEAM_LEN/2, 0);
+  const mat = beamMaterial(intensity);
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.z = Math.PI/2 - TILT;
+  m.renderOrder = 6;
+  return m;
+}
+const wrapperA = new THREE.Group();
+wrapperA.add(makeBeamCone(5.5, 0.20), makeBeamCone(2.6, 0.34));
+const targetA = new THREE.Object3D(); targetA.position.set(BEAM_LEN, -BEAM_LEN*Math.tan(TILT), 0);
+wrapperA.add(targetA);
+const wrapperB = new THREE.Group(); wrapperB.rotation.y = Math.PI;
+wrapperB.add(makeBeamCone(5.5, 0.20), makeBeamCone(2.6, 0.34));
+const targetB = new THREE.Object3D(); same pos;
+wrapperB.add(targetB);
+beamGroup.add(wrapperA, wrapperB);
+```
+
+Spotlights:
+```js
+const spotA = new THREE.SpotLight(0xffd9a8, 3200, 170, 0.16, 0.55, 1.4);
+spotA.position.set(0, LAMP_Y, 0);
+spotA.target = targetA;
+scene.add(spotA);
+const spotB = ... clone params, target = targetB;
+```
+Note SpotLight constructor(color, intensity, distance, angle, penumbra, decay).
+
+Lamp point light + glow sprite at lamp.
+
+Gulls: build geometries once:
+
+```js
+const gullBodyGeo = new THREE.SphereGeometry(0.16, 10, 8); gullBodyGeo.scale(0.75, 0.6, 1.7);
+const gullHeadGeo = new THREE.SphereGeometry(0.095, 8, 6);
+const gullBeakGeo = new THREE.ConeGeometry(0.03, 0.13, 6); gullBeakGeo.rotateX(Math.PI/2);
+const gullTailGeo = new THREE.ConeGeometry(0.075, 0.24, 6); gullTailGeo.rotateX(-Math.PI/2); gullTailGeo.scale(1, 0.45, 1);
+const wingGeoR = new THREE.PlaneGeometry(1.05, 0.3); wingGeoR.translate(0.55, 0, 0); wingGeoR.rotateX(-Math.PI/2);
+const wingGeoL = new THREE.PlaneGeometry(1.05, 0.3); wingGeoL.translate(-0.55, 0, 0); wingGeoL.rotateX(-Math.PI/2);
+```
+Tail scale after rotateX: cone axis now along −Z; scale(1,0.45,1) flattens y. ok.
+
+Materials: gullMat, wingMat (DoubleSide), beakMat.
+
+makeGull(): group with meshes; wingR mesh position (0.07, 0.06, 0.04); wingL (−0.07, ...). Store refs in userData.
+
+GULLS params array; loop create.
+
+Update in animate.
+
+Clouds:
+
+```js
+const cloudGeo = new THREE.SphereGeometry(1, 14, 10);
+const cloudMat = new THREE.MeshStandardMaterial({ color: 0xcaa3b5, emissive: 0x3a2f45, emissiveIntensity: 0.5, roughness: 1, transparent: true, opacity: 0.5, depthWrite: false });
+const clouds = [];
+const cloudDefs = [ {a: 0.3, r: 120, y: 55, s: 1.2, drift: 1.6}, ... 6 ];
+for each: group; blobs 5-7: mesh scale (3+rand*4, 1+rand*0.8, 2+rand*1.5), position clustered (i*2.5 - center, rand, rand*1.5).
+group.position.set(cos(a)*r, y, sin(a)*r);
+```
+Deterministic pseudo-random via seeded function to keep calm composition: use Math.random fine (no requirement of determinism).
+
+Cloud drift: store speed; update x; wrap: if (g.position.x > 280) g.position.x = -280. But clouds positioned around circle — drifting along x only fine.
+
+Cloud castShadow false.
+
+Boulders material: MeshStandardMaterial({color:0x6a6e74, roughness:0.95, flatShading:true}).
+
+Sea stack generator:
+
+```js
+function makeStack(radius, squash, seed){
+  const geo = new THREE.IcosahedronGeometry(radius, 2);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count*3);
+  const v = new THREE.Vector3();
+  for(...){
+    v.fromBufferAttribute(pos, i);
+    const n = fbm(v.x*0.5+seed, v.y*0.5+seed*2, v.z*0.5);
+    const rr = radius*(1+0.32*n);
+    v.normalize().multiplyScalar(rr);
+    v.y *= squash;
+    if(v.y > radius*0.35){ v.y = radius*0.35 + (v.y - radius*0.35)*0.3; }
+    pos.setXYZ(...);
+    color: gray g = 0.42+0.1*fbm(...); wet band below y<0.4 → dark.
+  }
+  setAttribute color; computeVertexNormals;
+  mesh = new Mesh(geo, stackMat vertexColors flatShading);
+  castShadow = true; receiveShadow = true;
+  return mesh;
+}
+```
+Stacks positions: (20, 0.4, -16) radius 2.6 squash 0.95 → top ≈ 2.6*0.95*(1+0.32*?) ~ 2.5-3.2 + flatten cap at 0.9... radius*0.35 = 0.91 cap → top ≈ 0.91+... hmm cap flattens above 0.91: top ≈ 0.91 + small → ~1.1 + position.y 0.4 → 1.5 above water. Too short for "stack". Increase: radius 3.2, squash 1.1, cap at radius*0.5=1.6 → top ~1.7+pos 0.5 = 2.2. Still modest. Sea stacks should be taller: radius 3.0, squash 1.4, cap radius*0.55 = 1.65 → top ≈ 1.65*? after squash... let me simplify: don't cap stacks; just displace + squash → spiky rock. Top = radius*squash*(1+0.32n) ≈ 3*1.4*1.2 ≈ 5. pos.y = -0.5 → top ~4.5 above water, bottom -4.7 underwater. Spiky crag look — good. No flatten for stacks. Foam radius 3.6 matches waterline radius ~3*1.1=3.3. ok.
+
+Stack defs: [{p:[20,-16], r:3.0, sq:1.4, seed:5.2, y:-0.4}, {p:[-24,12], r:2.4, sq:1.5, seed:9.1, y:-0.3}, {p:[40,30], r:1.8, sq:1.6, seed:2.3, y:-0.2}].
+
+Foam spots radii: waterline radius ≈ r*(1+0.32*n) at y=0 → ~r*1.1: 3.3, 2.6, 2.0 → foam radii 3.8, 3.1, 2.5. Update uniform values accordingly.
+
+Island foam radius: island waterline radius ~ 8*(1+0.3n) ≈ 8-10.4 → foam 10.8 band 2.4 → covers 8.4-10.8. ok.
+
+Boulders: positions on plateau (world y ≈ 3.5): 
+```js
+[[2.6, 3.45, 1.4, 1.1], [-2.9, 3.4, -1.2, 0.85], [1.1, 3.5, -3.4, 0.7], [-1.6, 3.48, 2.7, 0.95], [3.4, 3.35, -2.6, 0.6]]
+```
+y = plateau minus radius*0.25 to sink in. Plateau world y: island mesh y 1.4 + plateau local ~2.2-2.4 → 3.6-3.8. Boulder center y = 3.55 - r*0.3. Fine — compute per def: y given.
+
+Lighthouse position y = 3.55.
+
+LAMP_Y = 3.55 + 7.16 = 10.71. Let me recompute lighthouse local heights:
+- base: h 0.8, center y 0.4 → top 0.8
+- tower: h 5.6, center y 0.8 + 2.8 = 3.6 → top 6.4
+- balcony: h 0.18, center 6.4 + 0.09 = 6.49 → top 6.58
+- lamp room: h 1.15, center 6.58 + 0.575 = 7.155 → top 7.73
+- roof: h 1.0, center 7.73 + 0.5 = 8.23 → top 8.73
+- finial sphere r 0.12 at 8.85
+Lamp center local 7.155 → world 3.55+7.155 = 10.705. LAMP_Y = 10.7.
+
+Beam group y 10.7. Point light y 10.7. Glow sprite y 10.7.
+
+Rail torus radius 1.45 tube 0.045 at y 6.75.
+
+Also balcony support: cone under balcony? CylinderGeometry(1.45, 1.2, 0.18)? Keep simple cylinder.
+
+Lighthouse door? skip.
+
+Now animate():
+
+```js
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+  skyMat.uniforms.uTime.value = t;
+  waterUniforms.uTime.value = t;
+  const th = t * 0.3;
+  beamGroup.rotation.y = th;
+  waterUniforms.uBeamA.value.set(Math.cos(th), -Math.sin(th));
+  waterUniforms.uBeamB.value.set(-Math.cos(th), Math.sin(th));
+  // gulls
+  for(const g of gulls){ ... }
+  // clouds
+  for(const c of clouds){ c.group.position.x += c.speed*dt; if(c.group.position.x > 290) c.group.position.x = -290; }
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+```
+
+Gull update:
+```js
+const a = g.phase + t * g.speed * g.dir;
+const px = Math.cos(a) * g.r;
+const pz = Math.sin(a) * g.r;
+const py = g.h + Math.sin(t * 0.55 + g.phase * 2.7) * 1.3;
+g.obj.position.set(px, py, pz);
+const vx = -Math.sin(a) * g.dir * g.speed;
+const vz = Math.cos(a) * g.dir * g.speed;
+g.obj.rotation.y = Math.atan2(vx, vz);
+g.obj.rotation.z = g.dir * 0.18;
+const glide = 0.2 + 0.8 * Math.max(0, Math.sin(t * 0.19 + g.glide));
+const flap = Math.sin(t * g.flapSpeed + g.phase) * 0.65 * glide;
+g.wingR.rotation.z = flap;
+g.wingL.rotation.z = -flap;
+```
+Note rotation.z bank + flap wings — wings are children, fine.
+
+Wait: g.obj.rotation.z bank with default order XYZ: rotation applied Z first? THREE Euler order 'XYZ' means: quaternion = qX * qY * qZ (applied Z first, then Y, then X — intrinsic X→Y→Z?). In three.js, Euler XYZ: the rotation matrix is R = RX(x) * RY(y) * RZ(z)? Let me recall Quaternion.setFromEuler for 'XYZ': q = qx * qy * qz. Applied to vector: v' = qx*qy*qz * v → Z rotation applied first. So bank (z) applied first, then yaw (y) — bank around local Z before yaw → correct banking behavior (roll around forward axis then yaw). 
+
+Resize:
+```js
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+```
+
+Beam material function:
+
+```js
+function beamMaterial(intensity){
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uColor: { value: new THREE.Color(0xffdca8) },
+      uIntensity: { value: intensity },
+      uFogColor: { value: FOG_COLOR.clone() },
+    },
+    vertexShader: `
+      varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+      void main(){
+        vUv = uv;
+        vN = normalize(mat3(modelMatrix) * normal);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vW = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uIntensity; uniform vec3 uFogColor;
+      varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+      void main(){
+        vec3 V = normalize(cameraPosition - vW);
+        float edge = pow(abs(dot(normalize(vN), V)), 1.7);
+        float len = pow(clamp(vUv.y, 0.0, 1.0), 1.6);
+        float tip = smoothstep(1.0, 0.97, vUv.y);
+        float dist = length(cameraPosition - vW);
+        float fogF = 1.0 - exp(-dist * 0.018);
+        float a = uIntensity * edge * len * tip * (1.0 - fogF * 0.85);
+        gl_FragColor = vec4(uColor, a);
+      }`
+  });
+}
+```
+mat3(modelMatrix) — modelMatrix uniform available in vertex shader of ShaderMaterial. Yes.
+
+Water vertex shader full:
+
+```glsl
+uniform float uTime;
+varying vec3 vWorldPos;
+varying vec3 vNormal;
+varying float vCrest;
+void main(){
+  vec3 p = position;
+  vec2 xz = p.xz;
+  float p1 = dot(xz, vec2(0.94, 0.34)) * 0.11 + uTime * 0.85;
+  float p2 = dot(xz, vec2(0.62,-0.78)) * 0.17 + uTime * 1.15;
+  float p3 = dot(xz, vec2(-0.38, 0.92)) * 0.26 + uTime * 1.55;
+  float p4 = dot(xz, vec2(0.16, 0.99)) * 0.42 + uTime * 2.10;
+  float h = 0.34*sin(p1) + 0.26*sin(p2) + 0.16*sin(p3) + 0.09*sin(p4);
+  float dhx = 0.34*0.11*0.94*cos(p1) + 0.26*0.17*0.62*cos(p2) + 0.16*0.26*(-0.38)*cos(p3) + 0.09*0.42*0.16*cos(p4);
+  float dhz = 0.34*0.11*0.34*cos(p1) + 0.26*0.17*(-0.78)*cos(p2) + 0.16*0.26*0.92*cos(p3) + 0.09*0.42*0.99*cos(p4);
+  p.y += h;
+  vNormal = normalize(vec3(-dhx, 1.0, -dhz));
+  vCrest = h * 0.5 / 0.85 + 0.5; // total amp 0.85
+  vWorldPos = p;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+}
+```
+vCrest = h/0.85*0.5+0.5 — h ranges ±0.85 → vCrest 0..1. Use vCrest = h/0.85*0.5+0.5.
+
+Water fragment as planned with noise functions.
+
+Check: water fragment uses uFoamSpots loop — GLSL1 loop with uniform array indexing constant i — allowed (indexing uniforms with loop index is allowed in ES2? Indexing uniform arrays with non-constant expression is allowed only for... In GLSL ES 1.00, uniform arrays can be indexed with constant-index-expressions; loop indices count as constant-index-expressions in practice for WebGL1. WebGL2 fine. three r170 uses WebGL2 → GLSL ES 3.00 via auto conversion? three compiles ShaderMaterial GLSL1-style to ES3.00 automatically (it prefixes and converts). Loop indexing fine.
+
+Now island color computation JS:
+
+```js
+function sstep(e0, e1, x){ const t = Math.min(Math.max((x-e0)/(e1-e0), 0, 1), 1); return t*t*(3-2*t); }
+```
+careful: Math.min(Math.max(...),1) — write properly: `const t = Math.max(0, Math.min(1, (x-e0)/(e1-e0)));`
+
+Island colors:
+```js
+const nCol = fbm(v.x*0.8+5.5, v.y*0.8, v.z*0.8);
+let cr = 0.46 + 0.10*nCol, cg = cr*0.97, cb = cr*1.06;
+const wet = 1 - sstep(0.15, 1.2, v.y);
+cr = cr*(1-wet*0.75) + 0.14*(wet*0.75); ... simpler: 
+cr = lerp(cr, 0.15, wet*0.8); cg = lerp(cg, 0.17, wet*0.8); cb = lerp(cb, 0.20, wet*0.8);
+const gn = fbm(v.x*0.55+11.3, 3.3, v.z*0.55);
+const grass = sstep(2.15, 2.75, v.y) * sstep(0.05, 0.4, gn);
+cr = lerp(cr, 0.30, grass*0.85); cg = lerp(cg, 0.38, grass*0.85); cb = lerp(cb, 0.20, grass*0.85);
+```
+lerp helper.
+
+Stack colors similar minus grass.
+
+Note: island flatten threshold 2.2 local; grass from 2.15 — plateau region. Good.
+
+Island mesh: position.y = 1.4; receiveShadow = true; castShadow = true (casts onto itself? with flatShading and shadow bias ok — self-shadow acne possible; normalBias 0.03 helps). Set castShadow true.
+
+Also island material: MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true }).
+
+Metalness 0 default.
+
+Everything set. Now caption text and vignette CSS.
+
+Also add `renderer.domElement` style position fixed. Overlays z-index 2.
+
+Potential issue: SpriteMaterial with CanvasTexture — fine.
+
+Sun sprite positions: SUN_DIR*355 → (-207.7, 37.9, -284.7). Halo scale 120 — sprite size in world units; at distance ~355 from camera, scale 120 huge glow — maybe too huge; use 90. Core 26.
+
+Also add faint moon? no.
+
+Double-check SpotLight shadow not enabled — default castShadow false. Good.
+
+PointLight: `new THREE.PointLight(0xffc27a, 25, 30, 1.8)`.
+
+Intensity check for point light physical mode: intensity 25 candela → at 3m: 25/3^1.8 ≈ 25/7.2 ≈ 3.5 — bright warm pool. ok.
+
+Hemi 0.55, dir 1.7 — dusk balanced. Exposure 1.12.
+
+Water is custom-lit — independent of three lights; colors chosen directly. Good.
+
+One concern: water fragment `uSky` fresnel reflection color — mauve #7a5f86; toward sun should be warmer — could mix uSky with sun glow based on reflect dir dot sun: 
+```glsl
+vec3 R = reflect(-V, N);
+float rs = max(dot(R, uSunDir), 0.0);
+vec3 skyCol = mix(uSky, uSunSpec, pow(rs, 3.0) * 0.7);
+col = mix(base, skyCol, fres*0.8);
+```
+Nice — sunset reflection path toward sun. Add.
+
+Also remove separate broad sheen maybe keep small.
+
+Final check on beam gate distances: lamp at (0,10.7); beam hits water at horizontal ~47. Gate smoothstep(6,14,d)*(1-smoothstep(60,78,d)) → glint visible 14-60, fading after. Beam footprint radius at distance d: tan(0.16)*d ≈ 0.16d → at 47: 7.5 wide streak. align pow 10 narrows to center ~ fine.
+
+specL pow 320 with normal mostly up: Hl ~ halfway between V (up-ish from water to camera) and L (from water to lamp, upward steep) — both up → dot(N,Hl) high across footprint → bright streak modulated by align. Good.
+
+Also add slight beam light on water even outside spec: skip.
+
+Gull near beam: gulls lit by spot briefly — nice.
+
+Now, is `flatShading` with `vertexColors` OK? yes.
+
+IcosahedronGeometry detail 4: faces 20*4^4 = 5120, verts 15360 non-indexed — loop fine.
+
+computeVertexNormals on non-indexed → flat normals per face anyway; with flatShading material, three uses derivative normals (FLAT_SHADED) ignoring attribute normals — still call computeVertexNormals harmless.
+
+Actually wait — does three use attribute normals when flatShading true? In WebGLPrograms, flatShading defines FLAT_SHADED; in normal_fragment_begin: `#ifdef FLAT_SHADED normal = normalize( cross( dFdx( vViewPosition ), dFdy( vViewPosition ) ) );` — yes derivative-based. Good.
+
+Cloud material with fog: FogExp2? scene.fog Fog linear — standard materials handle.
+
+Cloud transparency + fog → fine.
+
+Now write the final HTML. Also include a tiny loading fade-in: body opacity transition? Add CSS animation fadeIn on canvas. Simple.
+
+Caption content: "Rocky Islet at Dusk — drag to orbit · scroll to zoom". Position bottom-left, font 12px, letter-spacing, color rgba(230,225,240,0.5), text-shadow. Fade in after load via CSS animation delay.
+
+Let me write out everything now, mentally compiling for errors.
+
+Order of definitions: constants (FOG_COLOR, SUN_DIR, LAMP_Y, BEAM_LEN, TILT), helpers (sstep, lerp, fbm, radialTexture, stripeTexture), renderer, scene, camera, controls, lights, sky, water, island, stacks, boulders, lighthouse, beams+spots, gulls, clouds, sprites, animate, resize.
+
+controls need camera + renderer.domElement — after renderer.
+
+LAMP_Y used in water uniforms and lamp position — define const LAMP_Y = 10.7.
+
+Check water uniform uLampPos Vector3(0, LAMP_Y, 0).
+
+Gull object structure: {obj, wingR, wingL, r, h, speed, dir, phase, flapSpeed, glide}.
+
+makeGull(scale): returns {obj, wingR, wingL}.
+
+Cloud defs: 
+```js
+const cloudDefs = [
+  { a: 0.4, r: 130, y: 58, s: 1.3, speed: 1.7 },
+  { a: 1.5, r: 170, y: 66, s: 1.6, speed: 1.3 },
+  { a: 2.6, r: 110, y: 50, s: 1.0, speed: 2.1 },
+  { a: 3.4, r: 190, y: 72, s: 1.8, speed: 1.1 },
+  { a: 4.5, r: 140, y: 62, s: 1.2, speed: 1.9 },
+  { a: 5.6, r: 160, y: 55, s: 1.4, speed: 1.5 },
+];
+```
+Blobs per cloud: 6. Blob offsets: (i-2.5)*2.2*s, (rand-0.5)*1.2, (rand-0.5)*2. Blob scale: (2.5+rand*3.5)*s, (0.9+rand*0.7)*s, (1.6+rand*1.2)*s.
+
+Cloud group position: (cos(a)*r, y, sin(a)*r). Drift x wrap ±290 — clouds at r up to 190 + drift... x wrap fine.
+
+Cloud opacity 0.5 — overlapping transparent spheres sorting within cloud: depthWrite false → no popping; blending order artifacts minor at dusk. OK.
+
+Sun sprites: 
+```js
+const sunTex = radialTexture([[0,'rgba(255,244,214,1)'],[0.2,'rgba(255,196,120,0.85)'],[0.55,'rgba(255,130,70,0.28)'],[1,'rgba(255,110,60,0)']]);
+const sunCore = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+sunCore.scale.set(26,26,1); sunCore.position.copy(SUN_DIR).multiplyScalar(355);
+const sunHalo = ... scale 95, opacity 0.5 (material.opacity = 0.5);
+```
+SpriteMaterial opacity works with transparent true.
+
+Lamp glow tex: [[0,'rgba(255,236,190,1)'],[0.35,'rgba(255,196,120,0.55)'],[1,'rgba(255,170,90,0)']]; sprite scale 5; position (0, LAMP_Y, 0); renderOrder 7.
+
+Sprites renderOrder default 0 — additive sprites vs beams: both additive, order irrelevant. Clouds normal blending should render before additive? Additive after opaque; transparent objects sorted by depth anyway. Set beams renderOrder 6, sprites 7 to draw after clouds (clouds renderOrder 4). Water opaque renders first. OK.
+
+Sky renderOrder -1 with depthWrite false — drawn first, everything else overdraws. Sky sphere radius 380 < camera far 900. Good.
+
+Also water renders opaque — covers sky below horizon. Good.
+
+Edge: camera maxPolarAngle 1.48 rad ≈ 84.8° — camera can dip near water level; minDistance 20 keeps outside island. Water plane at y0; camera y could go slightly negative? polar 84.8° at distance 20 from target (0,4,0): y = 4 + 20*cos(84.8°) = 4 + 20*0.09 = 5.8 — stays above water. Good.
+
+autoRotateSpeed 0.35 (negative? positive rotates counterclockwise). 0.35 slow.
+
+Now finalize numbers for spotlight: intensity 3200 might blow out tower when beam passes — tower at distance 0 from light (light at lamp, tower below ~4-10m): decay 1.4 → at 6m: 3200/6^1.4 = 3200/12.3 = 260 — extremely bright on balcony when beam points at tower... but beam angle 0.16 — tower top within cone only when beam points down at it; beam tilted down 12.6° from horizontal — balcony is below lamp by ~3.5m, within angle atan(3.5/...) — when beam sweeps past tower direction, balcony lit at distance ~4m → intensity 3200/4^1.4≈3200/6.96≈460 → overexposed white flash briefly. That's actually realistic-ish (beam passes the tower itself) but may look like a blink. Reduce intensity to 1800 and widen penumbra. At 4m: 1800/7 = 257 still hot. Hmm physical falloff near source always harsh. Set decay 2 (physical): at 4m: 1800/16 = 112; at 47m (water): 1800/2209 = 0.8 — too dim for water rocks at distance. Compromise: decay 1.6, intensity 2000: at 4m: 2000/9.2=217 hot; at 47m: 2000/278=7.2 bright on water rocks. The tower flash: it's brief (beam passes in ~1s) — acceptable, even dramatic. But overexposure to pure white loses detail. Alternatively exclude tower from spot via layers — overkill. Keep intensity 1600, decay 1.6: at 4m → 1600/9.2 ≈ 174; ACES will roll off to bright warm — fine, brief.
+
+Also spot affects gulls when beam crosses them — nice highlight moment.
+
+Water glint intensity 3.0 in shader — tune 2.5.
+
+I think ready. Also add `renderer.setClearColor(FOG_COLOR)` — sky covers everything anyway.
+
+Write final file. Keep code organized with comments. Length ~450 lines. 
+
+One more check — `THREE.CanvasTexture` colorSpace for stripe texture: SRGBColorSpace correct for color map.
+
+TorusGeometry rail: TorusGeometry(1.45, 0.045, 8, 32), rotateX(PI/2) → lies horizontal. Position y 6.75.
+
+Lamp room glass cylinder open-ended? closed fine.
+
+Roof cone red #9e3d34 roughness 0.6.
+
+Base stone #8a8578.
+
+Balcony #2e2a2a metalness 0.6 roughness 0.5.
+
+Tower geometry: CylinderGeometry(1.05, 1.55, 5.6, 24, 1). Stripe texture repeat around: wrapS repeat, repeat.x = 1 (bands horizontal rows — texture v maps along height: cylinder uv v=0 bottom? CylinderGeometry torso uv.y = 1 - v with v=0 at top → uv.y=1 at top, 0 at bottom. Canvas y=0 top row corresponds to texture v=1? Canvas texture: canvas top row = v=1 (flipY default true). So canvas top band appears at cylinder top. Bands alternate starting white at top: i=0 white at canvas top → tower top white. Good.
+
+6 bands over 5.6m → ~0.93m each. Fine.
+
+Also add subtle tower taper shadow? skip.
+
+Gull beak color #d98a4a; eyes? skip tiny.
+
+Let me also double check gull wing geometry: PlaneGeometry(1.05, 0.3) in XY plane; translate(0.55,0,0) → spans x 0.025..1.075; rotateX(-PI/2): (x,y,0)→(x,0,-y) → spans x same, z -0.15..0.15. Wing horizontal extending +X. Good. WingL spans -1.075..-0.025.
+
+Wing position y 0.06 above body center; body scaled sphere radius y 0.16*0.6=0.096 → wing at 0.06 slightly inside top — ok visually.
+
+Gull scale: obj.scale.setScalar(g.scale) with scale 1.2-1.5.
+
+Now — potential z-fighting: foam ring vs island shoreline — water plane under island hidden. fine.
+
+Also add slight emissive to water? no.
+
+Final: write code. Also ensure no external assets besides the two CDN URLs in import map. Canvas textures are code-generated — allowed ("build everything in code").
+
+Caption fade: CSS @keyframes fadein { from opacity 0 } animation 2s ease 0.8s both.
+
+Vignette div CSS.
+
+Also `overflow:hidden`, `height:100vh`? canvas fixed. body margin 0.
+
+Write it.
+
+Additional small detail: gentle lighthouse "breathing" — lamp emissiveIntensity subtle pulse? Keep steady (rotating beam is the motion).
+
+Also maybe rotate beamGroup initial offset so beam doesn't start pointing at camera: th = t*0.3 + 1.2 offset. Add offset 1.2.
+
+Uniform beam dirs use same th.
+
+OK writing final answer now. I'll aim for clean, commented code.
+
+One more consideration on water fragment: `vWorldPos` — mesh at origin, no rotation (geometry pre-rotated) → worldPos = local. Correct.
+
+Fog in water: smoothstep(55, 280, dist).
+
+Also water near camera at distance ~50 → slight fog. fine.
+
+Sky uHorizon #6e4a72 might be too saturated; dusk mauve ok with ACES.
+
+Let me also set scene.background = null (sky mesh covers). renderer clear color fog color as fallback.
+
+Check import map exactly as requested:
+```json
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+```
+
+Done. Write answer with brief intro then the file.

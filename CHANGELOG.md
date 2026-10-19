@@ -1,4 +1,11 @@
-# Fast interactive path — 2026-10-18 (local)
+# v0.4 — 2026-10-19
+
+- Showcases: two one-shot three.js demos by the 3.1 quant with thinking on (`showcase/`), with prompts, reasoning,
+  run records and screenshots; live pages via GitHub Pages.
+- bartowski IQ2_XXS added to the 3.1 quality table.
+- Explicit loader needs an idle card: VRAM headroom notes in INSTALL and TROUBLESHOOTING.
+
+## Fast interactive path (2026-10-18)
 
 - `bench/exllamav3-explicit-device.patch`: opt-in `-dev/--device` for `model_init` entry points such as
   `examples/chat.py`; default remains autosplit, and `-gs`/`-tp` are refused. Local, not upstream.

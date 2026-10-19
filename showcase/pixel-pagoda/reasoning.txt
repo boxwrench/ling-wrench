@@ -1,0 +1,2312 @@
+The user wants a single self-contained HTML file with a pixel-art pagoda scene using Three.js 0.170.0 via import map. Key requirements:
+
+1. Pixel-art look: render to small offscreen target (1/3-1/4 resolution), upscale with nearest-neighbor, no AA on inner render, flat shading, quantized lighting bands, small fixed palette (~dozen colors).
+2. Three-tier pagoda with curved eaves (stepped slabs + lifted corner blocks), stone steps, lanterns (emissive + glow sprites), cherry trees (jittered brown box trunks + pink box canopy clusters), stepped island hill from height grid (~64×64), still pond flat plane, stars at night, petals drifting.
+3. Time-of-day buttons: day/sunset/night — sun color, sky, fog, lantern glow, pond tint swing together.
+4. Orbit controls (auto-drift until touched), zoom, mouse+touch, thumb-sized buttons.
+5. Reduced motion: freeze petals, drift, flicker.
+6. Performance: merged/instanced geometry, few draw calls, cap pixel ratio ~2, zero per-frame allocations in hot loop.
+7. DOM overlay for UI, never in pixel buffer.
+8. Classic WebGLRenderer, no WebGPU.
+
+Plan the implementation:
+
+- Import map pinned to three@0.170.0.
+- Renderer: WebGLRenderer with antialias:false, renderTarget at low resolution (e.g., width/3), NearestFilter on target texture, then quad scene drawn to screen with NearestFilter, no AA. Actually simpler: render scene to WebGLRenderTarget with nearest filter, then blit to canvas via a fullscreen quad with a basic material using the target texture, minFilter/magFilter Nearest. Screen renderer can have antialias false too.
+
+Alternative: render directly to canvas at low resolution and CSS-scale the canvas up with image-rendering: pixelated. That's even simpler and guaranteed pixel-perfect! Set canvas width/height to small (e.g., 320×180-ish scaled by aspect), CSS width 100%, image-rendering: pixelated. But devicePixelRatio... The requirement says "render the 3D scene into a small offscreen target at roughly one-third to one-quarter of screen resolution (keep the aspect ratio), then draw that image to the screen with nearest-neighbour filtering". The CSS upscale approach achieves exactly that with zero extra draw and perfect nearest. But "cap the final pixel ratio (~2 max; the inner pixel target stays tiny)" — suggests they expect a render target approach. Either works; the CSS approach is simpler and robust. However, with CSS scaling, the canvas backing store is the low-res buffer; browser upscales with pixelated rendering. That satisfies nearest-neighbour. I'll do the offscreen render target + blit quad approach to be faithful to the spec? Hmm, the CSS approach is actually cleaner and avoids an extra pass. But the spec explicitly describes the offscreen target technique. Both are "known to work". The CSS approach: renderer = new WebGLRenderer({canvas, antialias:false}), setSize(lowW, lowH, false), canvas.style.width = '100%'. image-rendering: pixelated. This gives hard pixels. One caveat: on some browsers image-rendering: pixelated support is good (Chrome, Firefox, Safari 14+). It's fine.
+
+But there's a subtlety: renderer.setPixelRatio(1) and setSize to low res. Then the drawing buffer is low res. Upscale via CSS. This is the classic pixel-art rendering trick. I'll go with this — simpler, fewer moving parts, guaranteed nearest. Actually wait — "cap the final pixel ratio (~2 max; the inner pixel target stays tiny)" — with CSS approach the final pixel ratio is effectively the upscale factor which is screen/lowres ≈ 3-4. Hmm, that phrase seems to assume the render-target-then-blit approach where the final canvas is at devicePixelRatio capped at 2. With CSS approach, the "final" buffer IS the tiny one. I think either satisfies the spirit. But to be safe and faithful, I'll do the two-pass approach: inner render target at ~1/3 resolution, then blit to a full-res canvas (pixelRatio capped at 2) with a NearestFilter quad. That matches the described technique exactly and keeps text... no text in 3D anyway.
+
+Actually the two-pass approach has a cost: extra fullscreen pass, negligible. And it guarantees nearest upscale regardless of CSS support. Let me do that.
+
+Implementation details:
+
+Palette (~12-16 colors):
+- Sky day: #7ec8e3-ish... Let's define per time-of-day: sky top, sky horizon, fog, sun color, ambient, water, lantern glow intensity.
+
+Fixed palette colors (hex):
+- roofRed: #c73e3a (vermilion)
+- roofDark: #8e2f2b (shadow band)
+- wood: #6b4a2f
+- woodDark: #4a3220
+- stone: #8a8f96
+- stoneDark: #5f646b
+- blossom: #f6b8c8
+- blossomDark: #e08ba0
+- leafGreen: #5f9e5a? Cherry trees are blossom; maybe a few green accents. Keep palette tight: blossom pink two tones.
+- water day: #3f8fae; night: #1c2f4a; sunset: #c97a4a? Water tints per mode.
+- trunk: #5a3b28
+- lantern: #ffd9a0 emissive
+- moonBlue ambient night: #2a3f5f
+
+Lighting quantization: use MeshBasicMaterial? Flat poster shading: could use MeshLambertMaterial with flat colors and quantize via onBeforeCompile? Simpler: use vertex-color-based fake shading — bake "shadow band" by using two materials: lit color and dark color assigned per face orientation? That's complex. Alternative: use MeshBasicMaterial with per-object colors and rely on a few discrete shades per object (e.g., roofs have main slab in roofRed, underside/corner blocks in roofDark). Since everything is boxes, we can assign materials by box role: body lit, body shadow side... Hmm.
+
+Simplest robust approach: MeshLambertMaterial with low-intensity ambient + directional, and quantize the lighting in a custom shader chunk: replace the lighting computation with stepped bands. Or even simpler: use MeshBasicMaterial (unlit) and fake shading by splitting each box's faces into "top/lit" and "side/shadow" via two materials — with BoxGeometry we can assign material index groups: BoxGeometry has 6 groups (one per face). We can pass an array of two materials: e.g., [side, side, top, bottom, side, side] — top face lighter, sides darker. That gives hard poster shading with zero lighting cost! MeshBasicMaterial with material array per box: faces +y = light shade, -y = darkest, ±x/±z = mid shade. That's classic voxel game art shading. 
+
+But then time-of-day relighting: we'd need to swap material colors per mode. With merged geometry per (role, shade) we can just update material.color per mode. Materials count small. This is very performant: MeshBasicMaterial, no lights needed for static scene! Lantern glow via sprites additive. Stars via Points. Petals instanced quads with basic material (double side). Pond: custom shader or basic material with color per mode; reflection hint: could use a ShaderMaterial with banded reflection based on view angle... keep simple: flat color + a darker smudge quad (pagoda silhouette) slightly offset + subtle animated shimmer via stepped color bands? "glassy pond" — maybe a shader that bands sky color by screen-space y and adds silhouette smudge. Keep it simple: pond plane with MeshBasicMaterial color = waterColor(mode), plus a pre-built "reflection" plane above it? Actually reflection: place an inverted copy? Too costly. Use a shader: color = mix(deepWater, skyColor, banded factor based on normalized y position + time-step shimmer), plus dark smudge where pagoda stands (based on distance from pagoda center in local coords). Write a small ShaderMaterial with uniforms updated per mode — no per-frame allocation (uniforms are preallocated; setting .value is fine).
+
+Hmm, but MeshBasicMaterial face-shading approach: for merged geometry, I need geometry groups per material. When merging boxes with BufferGeometryUtils.mergeGeometries, I can merge per shade-category: build separate geometries for "top faces", "side faces", "bottom faces"? That's awkward because each box contributes all 6 faces. Alternative: use vertex colors! Bake shade into vertex colors: for each box, set vertex colors per face: top vertices lighter, bottom darker, sides mid. Then merge ALL static boxes of the same palette-role into ONE geometry with vertex colors, and use a single MeshBasicMaterial with vertexColors:true. But different roles have different base colors (roof red vs stone vs wood). Vertex color = baseColor * shadeFactor. Then one material for everything static! Merge all static boxes into one geometry with vertex colors → ONE draw call for the entire static scene. That's the ultimate perf win and gives hard poster shading. 
+
+But time-of-day relighting: vertex colors are baked... Day/sunset/night change sky/fog/ambient mood. If static scene is fully baked vertex-colored, relighting means updating vertex colors — expensive-ish but doable via precomputed per-vertex shade factor and base color, then recompute on mode switch (not per frame). Geometry has maybe ~20-50k vertices; recomputing colors on mode switch is fine (one-time cost, not per frame). Store Float32Array base colors and shade factors; on mode change, multiply base * shade * modeTint and write into attribute, needsUpdate. That's clean.
+
+Alternatively use MeshLambertMaterial + lights and quantize. But vertex-color baking with one merged mesh is elegant and fast. Lanterns: emissive boxes — separate small meshes (a dozen or so) with MeshBasicMaterial bright color, plus glow sprites (Sprite with additive blending, canvas-generated radial texture — generated in code, allowed since "no textures" means no external textures; generating a canvas texture in code is fine). Actually "no textures" likely means no image downloads. A procedurally drawn glow sprite texture is standard. I'll generate a 64×64 radial gradient canvas texture... but wait, pixel look — glow sprites with smooth gradient would smear? Additive glow is soft by nature; it's a halo, acceptable ("soft additive glow sprites"). Keep them chunky-ish: maybe use a small texture with hard-edged stepped gradient (few bands) to keep pixel feel. I can draw concentric squares/circles with discrete alpha bands — pixel-style glow. 
+
+Fog: scene.fog with color per mode — fog on MeshBasicMaterial? Fog works with basic materials (fog: true default). Yes, MeshBasicMaterial supports fog. Good — distance haze toward sky color.
+
+Sky: big gradient? Use scene.background = color per mode, plus stars (Points) at night, plus maybe a sun/moon sprite. Sun: a pixel square sprite in day/sunset; moon in night. Simple: a Sprite with square texture, colored per mode, positioned far away. Or just background color + stars. Add a low-poly... keep: background color + fog + stars + sun/moon sprite.
+
+Petals: InstancedMesh of small quads (PlaneGeometry 1×1 scaled ~0.15), ~120 instances, MeshBasicMaterial pink double-sided, updated per frame via matrix compose — preallocate temp objects (Matrix4, Vector3, Quaternion) outside loop. Motion: drift down + sway, loop. Chunky: since inner render is low-res, motion quantizes naturally to pixels. Reduced motion: skip updates (freeze).
+
+Stars: Points with PointsMaterial size ~2 (in inner pixels), transparent, opacity animated per mode (fade in at night). Blinking: per-star phase — with PointsMaterial can't per-point opacity easily without shader; use custom ShaderMaterial for points with time uniform and per-point phase attribute. Or simpler: two star point clouds toggling opacity... Keep a small ShaderMaterial: attribute phase, blink = step(sin(t*speed+phase),0)... fine, no allocations.
+
+Orbit: implement custom orbit (avoid OrbitControls import? Could import from examples/jsm — allowed "only if you must"). Custom simple orbit: spherical coords around target, drag to rotate, wheel/pinch zoom, auto-drift until first interaction. Touch: single finger orbit, two-finger pinch zoom. Write it manually — full control, no extra import. Auto-drift: slow azimuth rotation until user interacts.
+
+Camera: perspective, fov ~45. Target at pagoda mid-height.
+
+Hill: height grid 64×64, stepped voxel mound: for each cell, height h = island profile (radial falloff + noise), place boxes of size cellSize × h*step × cellSize, top at varying heights → stepped mound. Merge into static geometry with stone/grass colors. Palette: hill top could be grass green (#6aa84f?) — palette says "stone steps"... island hill: grass-topped stone? Keep palette: grassGreen, stone, stoneDark. ~12-14 colors total. 64×64 = 4096 cells; only cells with h>0 get boxes; each box = 24 verts → maybe 2000 boxes × 24 = 48k verts. Fine for one merged geometry. But we can reduce: only emit boxes where height changes? Simpler: emit one box per cell with height = h*stepHeight. 4096 boxes merged = fine (single draw call, ~50k verts). Actually to reduce, skip cells with h==0 (water/pond area). Pond occupies some cells — those get no box; pond plane covers.
+
+Height function: island = smooth radial falloff: h = maxH * smoothstep(r) + noise*small. Stepped: quantize h to integer steps → voxel terraces. Add a flattened area for the pagoda platform and steps path, and carve pond depression at foot.
+
+Pagoda: three tiers stacked, shrinking. Each tier: body box (wood/stone), roof: 2-3 stepped slabs overhanging + lifted corner blocks. Plus a top finial. Stone steps: boxes descending the hill toward pond. Lanterns along steps: small emissive boxes + glow sprites, maybe 8-10 lanterns. Also lanterns on pagoda eaves corners? Keep along steps + a couple on tiers.
+
+Cherry trees: 2-3 trees: trunk = jittered stack of brown boxes (4-6 boxes with slight offsets), canopy = cluster of pink boxes (~15-25 boxes per tree in a blob shape, two pink tones). Merge all into static geometry.
+
+Petals: pink quads.
+
+Count draw calls: static merged (1), pond (1), lanterns emissive merged (1), glow sprites (each sprite = 1 draw... sprites are individual draw calls; 10 lanterns → 10 sprites; acceptable, or use InstancedMesh of planes with additive material — 1 draw call. Use InstancedMesh for glows! Plane geometry, additive blending, depthWrite false, per-instance scale via matrix. Flicker: update scales per frame (preallocated). Good.)
+
+Stars: 1 Points. Petals: 1 InstancedMesh. Sun/moon: 1 sprite or a plane. Sky background: clear color. Total ~6-7 draw calls. 
+
+Inner resolution: compute as max(160, floor(screenW/3.5))? Keep aspect. Say scale factor 3 (or 4 on big screens). innerW = ceil(clientW/3), innerH = ceil(clientH/3). Render target with NearestFilter, no mipmaps (generateMipmaps false, minFilter Nearest). Blit: fullscreen triangle/quad scene with MeshBasicMaterial map=target.texture, magFilter Nearest, minFilter Nearest. Render blit scene with renderer at full res (pixelRatio min(devicePixelRatio,2)).
+
+Wait — renderer renders two scenes: scene3D → target; blitScene → canvas. Use renderer.setRenderTarget(target); renderer.render(scene, camera); then setRenderTarget(null); renderer.render(blitScene, blitCamera). antialias:false on renderer. 
+
+Resize: recompute sizes, recreate target (or setSize on target — render target setSize works, keeps filters). Dispose old? target.setSize(w,h) handles it.
+
+Mode transitions: "one tap and the sun color, sky, fog, lantern glow, and pond tint all swing together" — animate transition over ~0.8s: lerp current params toward target params in the frame loop (preallocated Color objects, lerpColors). Parameters: skyTop? background single color + fog color + sun sprite color/position + water colors + lantern emissive intensity + glow sprite opacity + ambient tint for vertex colors (multiply tint per mode: day tint = white-ish warm, sunset = warm orange, night = moon-blue dark). Vertex color update during transition: recompute each frame during transition (~1s) — 50k verts × few ops = fine, but "zero per-frame allocations" — reuse arrays, no new objects. OK.
+
+Actually simpler: keep static vertex colors as base*shade, and apply mode tint via material.color! MeshBasicMaterial with vertexColors:true multiplies material.color × vertexColor. So set material.color = modeTint (a Color lerped during transition). One uniform update — no vertex rewriting! material.color tint: day = #ffffff (or slight warm), sunset = #ffd9b0-ish, night = #4a5f8a (moon-blue lift). That's the "one moon-blue ambient plus lantern lights". 
+
+But careful: tint multiplies vertex colors; night tint darkens everything — silhouettes readable via lantern glows and emissive lantern boxes (which are NOT tinted — separate material with fixed bright color, intensity via color scale). Pond shader has own uniforms. Stars fade in. Sky/fog/sun colors lerp. 
+
+Fog: Fog(color, near, far) — update color per transition. Fog affects basic materials — yes.
+
+Lighting bands: baked shade factors: top 1.0, sides 0.72, bottom 0.45? Plus per-role base colors. Also "quantize lighting to two or three hard bands" — exactly what we do: 3 bands.
+
+Palette enforcement: define PALETTE object; all colors from it. Per-mode variants: sky/fog/water/sun per mode; those are palette entries too (daySky, sunsetSky, nightSky, etc.). "on the order of a dozen colors" — we'll have maybe 20 including per-mode skies; acceptable "on the order of".
+
+Let me define palette:
+
+```
+const PAL = {
+  roof: 0xd84a3a, roofDark: 0xa83428, roofTrim: 0xf2e6c8? (eve edge)...
+```
+
+Keep it tight:
+
+- roofRed #d64533
+- roofShadow #9c2f24
+- wood #7a5230
+- woodDark #54381f
+- stone #9aa0a8
+- stoneDark #6b7078
+- grass #7fae5a
+- grassDark #5d8a42
+- blossom #ffc7d4
+- blossomDark #f2a0b4
+- trunk #5a3b28 (could reuse woodDark — reuse woodDark for trunks to save palette)
+- lanternCore #ffdca8
+- waterDeep #2e6b8a? per mode variants instead.
+- skyDay #8fd3e8, skyDayHorizon? single color bg + fog. Maybe two-tone sky via big gradient plane? Keep single bg color + fog; simpler and still pretty. Could add a huge "sky dome" plane... skip; background color suffices, stars + sun sprite add life.
+
+Per-mode params:
+```
+MODES = {
+ day:   { sky:0x8fd3e8, fog:0xa8d8e8, sun:0xfff3c0, tint:0xffffff, waterA:0x3f8fae, waterB:0x7fc4dd, lantern:0.15, glow:0.10, stars:0 },
+ sunset:{ sky:0xf2a65a? ... }
+ night: { sky:0x101a33, fog:0x1c2a44, sun(moon):0xdfe8ff, tint:0x5a6f9e, waterA:0x14253f, waterB:0x2a3f5f, lantern:1.0, glow:0.9, stars:1 }
+}
+```
+
+Sunset: sky #f7b06a? nicer: #f29e5c top, fog #e8b98a, sun #ffd27a, tint #ffcf9e, waterA #b96a4a? water mirrors sunset: #d98a5a / #f2b06a.
+
+Lantern emissive boxes: material color lerp from dim (day) to bright (night): color = lanternCore scaled by intensity. Use material.color.setScalar? Set color = core × (0.25 + 0.75*lanternLevel). Glow instanced planes: material.opacity = glowLevel (additive). Flicker: per-instance scale pulse ±10% at ~8Hz with per-lantern phase; reduced-motion → static.
+
+Pond shader:
+
+```
+uniforms: uDeep, uSky, uTime, uMode...
+fragment: banded reflection: float b = floor(vUv.y*4.0 + step shimmer) /4; col = mix(uDeep, uSky, b*0.5+...); silhouette smudge: dist from center → darken: col *= 1 - smudge*0.35; step quantize final color to 3 bands? quantize: col = floor(col*6)/6 for poster feel.
+```
+
+Shimmer: stepped time (floor(t*2)/2) so motion is chunky, not smeared. Nice touch: quantize time in shader for pixel-chunky animation.
+
+Silhouette smudge: pagoda is at hill top center; pond at foot. In pond local coords, smudge centered near pagoda side. Use distance to a point + a couple of ellipse blobs for tiers. Darken toward deep color. "a hint, not a true mirror" — good.
+
+Also pond edge: stone rim boxes around pond perimeter.
+
+Steps: from pagoda platform down the hill to pond: a zigzag? Straight run: boxes stepping down along hill slope on one side. Lanterns along them every ~2 steps.
+
+Hill grid: 64×64 cells, cell size ~0.5 world units? World scale: hill radius ~ 16 units, cell 0.5 → 64 cells across 32 units. Height max ~6 units, step height 0.5 → 12 steps. Pagoda platform flattened at top: radius ~4 flat at h=max. Pond: depression at foot: radius ~5 at h=0 area (cells h=0 → no box, pond plane y=0.05 covers). Island edge: cells beyond radius → h=0 (water around? "stepped island hill" — island in water? "still pond at the foot" — pond at foot of hill, not surrounding. So island sits on... ground? Make the whole thing an island: water plane large surrounding, pond is the water at foot? Simplify: big water plane at y=0 covering everything beyond hill base + pond area carved in hill front. Actually "stepped island hill" + "still pond at the foot": hill rises from water; pond = part of the water at the foot. So: water plane big (y=0), hill grid where h>0 boxes; pond carved as a flat depression near front foot where hill h=0 anyway... then pond == water plane. Fine: one big water plane = pond at foot + surrounding sea. The pond shader covers whole plane; smudge near pagoda. Simpler and reads well: island in water, pagoda on top, steps down to water edge, lanterns along steps, trees on hill. "Still pond at the foot" — the water at the foot of the hill. Good.
+
+Height grid: h(cell) = island profile: r = dist from center; base = smoothstep falloff from R=14 to R=20; plateau near top for pagoda: if r<4.5 → h=Hmax; steps path carve: along +Z direction a channel descending; noise: hash-based ±1 step. Quantize to steps of 0.5. Also carve pond basin: r in [6..9] on front side (z>0)? Hmm, if island is surrounded by water, the "foot" is where hill meets water. Steps lead down to water. Pond = water. OK.
+
+Trees: place 3-4 on hill slopes at chosen cells (compute h there). Trunk jittered stack: boxes 0.35 wide, heights stacking to ~2.5, each offset by hash jitter ±0.08. Canopy: cluster of boxes around top: ~18 boxes, positions on a blob (radius ~1.2, flattened sphere), sizes 0.5-0.9, colors blossom/blossomDark by hash. Also a couple of bushes (small blossom clusters) near steps.
+
+Petals: spawn around trees, drift: x += wind, y -= fall, z sway; loop in a box volume around scene center; reset to top when below ground. InstancedMesh count ~140. Size ~0.18 quad. Rotate slowly (spin) — chunky due to low res.
+
+Stars: ~180 points on a dome (radius 60, upper hemisphere), size 2 (inner pixels — size in world units at far distance... PointsMaterial size is in pixels unless sizeAttenuation false. Use sizeAttenuation:false, size: 2 → 2 device pixels? Points size is in pixels of the drawing buffer (inner buffer) → 2 inner pixels = chunky 6 screen px. Good. Blink shader: opacity per point = step(0.5, fract(t*0.3 + phase))? Use smooth-ish but quantized: blink = (sin(t*speed+phase)>0?1:0.25). ShaderMaterial for points:
+
+```
+attribute float phase; attribute float size;
+uniform float uTime, uOpacity;
+varying float vBlink;
+main: vBlink = step(0.35, fract(uTime*0.25+phase)); gl_PointSize = size; ...
+frag: if(vBlink<0.5) discard? or alpha = vBlink*uOpacity; color white-blue.
+```
+
+transparent, depthWrite false.
+
+Sun/moon: a plane sprite far away (position at azimuth fixed, elevation per mode: day high, sunset low, night moon high). Color per mode. Size ~4. Pixel square texture? Just a plane with basic material color — square sun = pixel style! Add a soft glow sprite behind it (additive, small). Square sun/moon reads game-art. 
+
+Clouds? skip — palette tight.
+
+Auto-drift: azimuth += 0.02 rad/s until user pointerdown/wheel. Also pause drift when reduced motion? Drift is camera motion — reduced-motion says freeze petals, drift, flicker. Yes: freeze drift too.
+
+Zoom: wheel → distance *= 1.1^delta; pinch: track two touches distance. Clamp [8, 40].
+
+Camera target: (0, hillTop+2, 0) roughly pagoda center.
+
+UI overlay: title "Pixel Pagoda" + three buttons Day/Sunset/Night, thumb-sized (min 44px), crisp CSS, positioned bottom center or top-left. Active state highlight. Also small hint text "drag to orbit · scroll to zoom". DOM overlay, pointer-events on buttons only.
+
+Reduced motion: matchMedia('(prefers-reduced-motion: reduce)') → freeze petals (don't update matrices, or hide?), drift, flicker, transition still allowed? Transition is a mode swing — keep it but maybe instant? Keep short transition; it's user-initiated. Fine.
+
+Performance: inner res = screen/3 (min 128 wide?). Cap inner res at like 480 wide to bound fill cost? On a 1920 screen /3 = 640 inner — fine for this simple scene. Pixel ratio for final blit: min(dpr, 2).
+
+Zero per-frame allocations: preallocate temp Matrix4/Vector3/Quaternion/Color; petals update uses reused objects; uniform .value assignments fine.
+
+Merging: write my own box push into arrays (positions, normals, colors, indices) — avoid BufferGeometryUtils import? Could import from examples/jsm/utils/BufferGeometryUtils.js — allowed. But writing a manual voxel builder is straightforward and avoids import risk. I'll write a helper `addBox(arrays, x,y,z,w,h,d, colorTop, colorSide, colorBottom)` that pushes 24 verts with per-face colors and 36 indices. Normals: needed? MeshBasicMaterial doesn't need normals. Skip normals entirely! vertexColors + basic material → no normals needed. 
+
+Face shade bands: top: 1.0, bottom: 0.42, x-sides: 0.68, z-sides: 0.8? Slight variation for poster depth. Actually classic: top brightest, north/south mid, east/west darker, bottom darkest. 4 bands — "two or three hard bands" — use 3: top 1.0, sides 0.7, bottom 0.45. Fine.
+
+Color quantization: quantize final colors to palette-ish steps? Since we pick exact palette hexes, no need. But tint multiplication creates off-palette colors... "grade every material toward it" — acceptable; or quantize tint result to 5 bits per channel in shader? Could add quantization in... basic material has no shader hook without onBeforeCompile. Skip; tint toward palette is fine.
+
+Lantern construction: small box (0.18×0.26×0.18) emissive + glow plane (1.2 size) additive. Lanterns: along steps (every other step, both sides? one side), plus 2 per tier corner? Keep ~10 total. Emissive boxes merged into one geometry with their own material (unaffected by tint — actually should they be tinted? At day they're dim paper: color = core×0.3; night bright. Lerp material.color). Glow instanced planes: additive, opacity lerped, flicker scale.
+
+Glow texture: canvas 32×32, concentric circles with discrete alpha bands (e.g., 4 bands: alpha 0.9,0.6,0.35,0.15) — chunky glow. Generate via code (allowed). NearestFilter on it too.
+
+Pond/water plane: size ~80×80 at y=0.02. ShaderMaterial:
+
+vertex: pass world pos / uv.
+fragment:
+```
+vec2 p = vWorld.xz;
+float bands = floor((p.y*0.15 + floor(uTime*2.0)*0.02)*3.0)/3.0; // stepped shimmer rows
+float refl = 0.25 + 0.35*bands;
+vec3 col = mix(uDeep, uSky, refl);
+// pagoda smudge: distance from smudge center
+float d = distance(p, uSmudge);
+float sm = smoothstep(6.0, 1.0, d); // hmm smoothstep ok? pixel look... quantize: sm = floor(sm*4.)/4.
+col = mix(col, uDeep*0.55, sm*0.5);
+// edge foam near island? skip
+col = floor(col*8.0)/8.0; // poster quantization
+```
+Also reflection of sky should vary with view angle for glassy feel: use view direction y: refl += pow(1-abs(viewDir.y),2)*0.3. Need view dir in fragment: compute from cameraPosition (built-in uniform in ShaderMaterial? cameraPosition available in vertex; pass varying). Fine.
+
+fog on custom shader: include fog manually? ShaderMaterial with fog:true requires fog uniforms/chunks. Simpler: skip fog on water (it's near center, fog far). Set material.fog false. OK.
+
+Stars dome radius 70 — fog far ~90 would fog them; stars material fog:false. Sun plane fog:false.
+
+Fog: near 25, far 75 — camera distance ~20-30, hill radius 20 → distant water fogs nicely toward sky color. 
+
+Background: scene.background = Color lerped.
+
+Now the pagoda geometry specifics:
+
+Base platform: stone box 5×1×5 at hill top (h=Hmax). Hill top plateau h=Hmax=3? Let's set hill max height 3.0 (6 steps of 0.5). Platform top at y=3+0.5=3.5? Platform box from y=3 to 3.5? Actually plateau cells have top at 3.0; platform box sits on top: center y 3.25, height 0.5 → top 3.5.
+
+Tier 1: body box 2.6×1.6×2.6 (wood/stone? pagoda bodies often stone/wood — use wood with stone base). Body center y = 3.5+0.8 = 4.3, top 5.1. Roof 1: slabs: main slab 3.6×0.25×3.6 at y 5.2 (overhang 0.5 each side), second slab 3.2×0.2×3.2 at y 5.45 (stepped up), corner lifts: 4 blocks 0.5×0.45×0.5 at corners (±1.55, y 5.55) lifted higher — fake curve. Also eave edge trim color (roofTrim?) — maybe skip trim color, use roofShadow for upper slab. Roof stack: slab1 (roofRed), slab2 (roofShadow), corners (roofRed lifted). Under-eave: dark box? The body top hidden.
+
+Tier 2: body 1.9×1.3×1.9 center y = 5.6+... let me compute: roof top ~5.7 (corner blocks top 5.77). Tier2 body base at 5.6: center 5.6+0.65=6.25, top 6.9. Roof2 slabs 2.9/2.5, corners at ±1.25.
+
+Tier 3: body 1.3×1.1×1.3 base 7.0, top 8.1. Roof3 slabs 2.1/1.8, corners ±0.95. Finial: small stacked boxes: 0.3×0.5×0.3 + 0.18×0.35×0.18 + tiny sphere-ish box, gold color? Add palette gold #e8c35a for finial + lantern cores maybe. Keep gold.
+
+Total pagoda height ~8.6. Camera target y ~4.5.
+
+Steps: from platform edge (x=0? front +Z) descending toward water: hill front slope. Steps path: along +Z from z=2.5 to z=14, each step box 1.2 wide × 0.5 deep × height following hill profile minus 0.25 (slightly embedded). Compute hill h at each z; place step box top at h+0.06. Lanterns every ~2.5 units alternating sides x=±0.9, on small posts (woodDark box 0.12×0.5×0.12 + lantern box).
+
+Trees at: (−6, slope), (5.5, ...), (−9,...), pick cells with h in 1..2.5. Compute h via same height function in code (JS), place trunk base at h.
+
+Bushes near steps: 3 blossom blobs of 6-8 boxes.
+
+Petal spawn zones around tree positions.
+
+Now height function (shared JS):
+
+```
+function hillH(x, z) {
+  const r = Math.hypot(x, z);
+  let h = 0;
+  if (r < 20) {
+    const t = 1 - smoothstep(10, 19, r); // 1 inside r<10 → 0 at 19
+    h = Math.floor(t * 12) * 0.5; // 0..6? max 6 → too high; use 7 steps → 3.5
+  }
+  // plateau
+  if (r < 4.2) h = 3.5;
+  // noise jitter ±0.5 on slopes only
+  ...
+}
+```
+
+Let me design: maxH = 3.5 (7 steps). t = smooth falloff; h = floor(t*7)*0.5 → terraces. Noise: hash(x,z) → ±1 step (0.5) but clamp ≥0 and keep plateau flat (r<4.2 → 3.5 exactly). Also carve steps channel: if |x|<0.9 && z>2.5 && z<16: h = min(h, lerp from 3.5 down to 0 along z)? That carves a trench for steps — then step boxes fill it. Simpler: don't carve; steps sit on top of slope following h(z). Steps as boxes whose top follows h+0.1, each step depth 0.6, from z=2.6 to z=15. Since hill slopes down in terraces, steps stair down. Lantern posts on steps sides.
+
+Pond at foot: water plane y=0.02 everywhere; island cells with h>0 rise from it. "Still pond at the foot" satisfied.
+
+Water plane 90×90 centered origin. Fog far 75 → edges fade into sky. 
+
+Hill grid: cells 64×64 covering x,z ∈ [-16,16], cell 0.5. For each cell compute h; if h>0 add box (0.5 × h × 0.5) center y=h/2, top color grass, sides stone? Stepped mound: top grass green, sides stone gray — classic. But sides of tall boxes all stone → mound reads stone with grass caps. Nice. Also underwater base? cells h=0 skipped; water covers.
+
+Vertex count: cells with h>0: roughly π*14²/0.25 ≈ 2460 boxes... area π*19² ≈ 1134 units² / 0.25 = 4536 cells total; h>0 maybe 3000. ×24 verts = 72k verts, ×36 idx = 108k indices. Fine.
+
+Also quantize: to reduce boxes, could merge columns... keep simple, one merged geometry handles it.
+
+Draw calls recap: staticMerged(1) + water(1) + lanternBoxes(1) + glows(1 instanced) + petals(1 instanced) + stars(1) + sunMoon(1 plane + 1 glow sprite instanced? make sun glow part of glow instanced set? separate simple plane additive 1) + blit quad(1). ~8 total. 
+
+Blit quad: separate Scene with OrthographicCamera(-1,1,1,-1,0,1) and PlaneGeometry(2,2) MeshBasicMaterial({map: target.texture, toneMapped:false}). Must disable tone mapping: renderer.toneMapping = NoToneMapping default is NoToneMapping? Default is NoToneMapping. OK. Also outputColorSpace: default SRGB in r170? renderer.outputColorSpace default = SRGBColorSpace. Colors defined via hex are converted... In r152+, Color.setHex assumes sRGB and converts to linear-srgb working space by default (ColorManagement enabled). MeshBasicMaterial colors will be converted properly. For the blit pass, texture from render target: render target texture colorSpace — when rendering to target, output is linear (target texture colorSpace default NoColorSpace/Linear). Then blit to canvas with outputColorSpace sRGB → renderer applies conversion in final pass. Should be consistent. Set target.texture.colorSpace = NoColorSpace default fine.
+
+Hmm, one catch: with ColorManagement, vertex colors set via setHex are converted to linear — good, consistent.
+
+Petal material: MeshBasicMaterial blossom color, side: DoubleSide. Instanced planes: PlaneGeometry(0.2, 0.2). Per-frame: for each petal update position/rotation/scale → setMatrixAt with preallocated objects; instanceMatrix.needsUpdate = true. 140 petals × compose = trivial.
+
+Petal data arrays (Float32Array or array of objects preallocated at init): x,y,z, speed, phase, rotSpeed, scale. Update: y -= fall*dt; x += wind*dt + sin sway; if y < groundY(x,z)? just reset when y<0.1 → respawn at top near a random tree. Rotation: quat from euler — use preallocated Euler→Quaternion setFromEuler with reused Euler. Or rotate via matrix makeRotationY then setPosition — compose cheaper: m.compose(pos, quat, scale). Preallocate.
+
+Reduced motion: skip petal update entirely (freeze), skip flicker (glow scale constant), skip drift. Also stars blink freeze? "freezing petals, drift, and flicker" — stars blink not mentioned; keep blink (it's ambient) or freeze? Keep stars blinking slowly — fine either way; I'll freeze blink too for consistency? Spec lists petals, drift, flicker. Stars blink allowed. I'll keep stars.
+
+Mode transition: current params object `cur` lerped toward `tgt` each frame: cur.sky.lerp(tgt.sky, k) etc. k = 1 - exp(-dt*3) ~ smooth 0.3s-ish. Apply: scene.background.copy(cur.sky); fog.color.copy(cur.fog); tintMat.color.copy(cur.tint); lanternMat.color = core×cur.lantern; glowMat.opacity = cur.glow; water uniforms uDeep/uSky copy; sun material color + position/elevation lerp; stars uOpacity = cur.stars. All preallocated Colors.
+
+Sun/moon elevation: day: high (y=30, warm white); sunset: low near horizon (y=8, orange), position maybe shifted azimuth; night: moon (y=26, pale blue-white). Lerp position too. Square plane 3.5×3.5 at distance 60, lookAt camera? Plane facing camera: use Sprite? Sprite is 1 draw call, always faces camera — good. SpriteMaterial with color, fog:false. Square sprite = pixel sun. Plus glow plane behind (additive sprite with glow texture, scale 8). Two sprites. SpriteMaterial map for glow; sun sprite no map (square). 
+
+Night ambient floor: tint night = #6a7ba8-ish so silhouettes readable (not too dark). Lantern glow carries steps.
+
+Also "warm ambient lift near the steps" at night: fake with a second tint? Could add a PointLight... we're using basic materials (unlit) — lights do nothing! Right: everything MeshBasicMaterial → lights irrelevant. So "lantern lights" = emissive + glow sprites + tint. Warm lift near steps: add a few glow sprites warm-colored near steps at night (already lantern glows). Good enough. Maybe add subtle warm glow plane under pagoda eaves? The eave corner lanterns? Add 2 lanterns on tier eaves. Fine.
+
+Flicker: glow instance scale = base × (1 + 0.12*sin(t*9+phase)) quantized? Chunky flicker: quantize flicker to steps: f = floor(sin*3)/3? Use step: flick = 0.85 + 0.15*floor(2*fract(t*1.5+phase))... keep simple sin, low-res makes it chunky anyway. Reduced motion → constant.
+
+Stars: positions on dome radius 55-70, y>5. 160 points. ShaderMaterial:
+
+```
+vertex: attribute float aPhase; attribute float aSize; uniform float uTime; varying float vA;
+vA = step(0.3, fract(uTime*0.2 + aPhase)); // blink
+gl_PointSize = aSize; (sizeAttenuation manual: gl_PointSize = aSize * (300/ -mvPosition.z)? with sizeAttenuation false style: just aSize in pixels)
+fragment: gl_FragColor = vec4(uColor, vA * uOpacity);
+```
+Need transparent:true, depthWrite:false, depthTest:true. Points size in pixels of inner buffer: aSize 1-3 inner px → chunky.
+
+gl_PointSize with pixel units: since we render into small target, point size is in target pixels — good.
+
+UI: 
+```
+<div id="ui">
+  <h1>Pixel Pagoda</h1>
+  <div class="btns"><button data-mode="day">Day</button>...</div>
+  <p class="hint">drag · scroll · pinch</p>
+</div>
+```
+CSS: position fixed, bottom center, backdrop blur? Crisp: solid translucent dark panel, pixel font? No fonts allowed (no external fonts) — use system monospace, letter-spacing, uppercase, image-rendering crisp. Buttons min-height 44px, min-width 64px, border 2px, active state inverted colors. Palette-matched UI colors (sunset orange accent).
+
+Title top-left maybe. Keep: top-left title, bottom-center buttons.
+
+Touch: pointer events unify mouse/touch: use PointerEvents with pointer capture; track active pointers map for pinch (two pointers → distance). Wheel: zoom. Buttons: click.
+
+Auto-drift: azimuth += dt*0.05 until first interaction (pointerdown on canvas or wheel). 
+
+Orbit math: spherical: theta (azimuth), phi (polar, clamp 0.15..1.45), dist. camera.position = target + spherical. lookAt target.
+
+Resize handler: update sizes: finalW = clientWidth, finalH = clientHeight; inner = ceil(final/PIXEL_SCALE) where PIXEL_SCALE=3 (maybe 3.5 for large). renderer.setSize(finalW, finalH, false) with pixelRatio min(dpr,2); target.setSize(innerW, innerH). Blit camera ortho fixed. Note: renderer.setPixelRatio then setSize(w,h,false) sets canvas style? updateStyle false → canvas CSS size controlled by CSS (width:100%;height:100%). Drawing buffer = w*pixelRatio.
+
+Inner target size: also cap inner max ~ 400×? to bound cost on huge screens: inner = min(ceil(w/3), 420)? Keep aspect: scale = max(w,h)/... compute s = Math.max(ceil(w/3), ceil(h/3))... simpler: factor = 3; if max(w,h) > 1600 factor = 4. innerW = max(96, round(w/factor)), innerH likewise.
+
+Now write the code carefully.
+
+Structure:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pixel Pagoda</title>
+<style>...</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"}}</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">...</div>
+<script type="module">
+import * as THREE from 'three';
+... everything ...
+</script>
+</body>
+</html>
+```
+
+No examples/jsm needed (custom orbit, custom merge). 
+
+Key code pieces:
+
+Voxel builder:
+
+```js
+function makeVoxelBuilder() {
+  const pos = [], col = [], idx = [];
+  let v = 0;
+  const cT = new THREE.Color(), cS = new THREE.Color(), cB = new THREE.Color();
+  function box(cx, cy, cz, w, h, d, cTop, cSide, cBot) {
+    // 8 corners
+    const x0=cx-w/2, x1=cx+w/2, y0=cy-h/2, y1=cy+h/2, z0=cz-d/2, z1=cz+d/2;
+    const shade = [1.0, 0.7, 0.7, 0.7, 0.7, 0.45]; // per face: px,nx,py,ny,pz,nz
+    const cols = [cSide,cSide,cTop,cBot,cSide,cSide];
+    const faces = [
+      [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]], // +x
+      [[x0,y0,z1],[x0,y1,z1],[x0,y1,z0],[x0,y0,z0]], // -x
+      [[x0,y1,z0],[x0,y1,z1],[x1,y1,z1],[x1,y1,z0]], // +y
+      [[x0,y0,z1],[x0,y0,z0],[x1,y0,z0],[x1,y0,z1]], // -y
+      [[x0,y0,z1],[x0,y1,z1],[x1,y1,z1],[x1,y0,z1]], // +z
+      [[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z0]], // -z
+    ];
+    for (let f=0; f<6; f++) {
+      const shadeF = f===2?1.0 : f===5?0.45 : 0.7; // hmm want 3 bands: top 1, sides 0.7, bottom 0.45
+      ...
+    }
+  }
+}
+```
+
+Winding: need outward-facing CCW. Let me verify each face quad order (a,b,c,d) with triangles (a,b,c),(a,c,d) is CCW outward.
+
+Standard BoxGeometry face orders (three.js): 
+- px: (1,0,0) normal, vertices: (x1, y0, z0)? Let me just use known-good table from voxel tutorials:
+
+For face +X (normal +x), CCW when viewed from +x: vertices in order: (x1, y1, z1), (x1, y1, z0), (x1, y0, z0), (x1, y0, z1)? Viewed from +x looking toward -x: y up, z to the... viewer at +x sees z axis pointing left? If looking from +x toward origin (-x direction), up=+y, right=+z? Cross: right = up × viewDir? viewDir = -x. right = viewDir × up = (-x)×(y) = -z? Hmm: for a viewer, right = viewDir × up gives... Let's use: right = up × (-viewDir)? Easier: use the standard: face +X CCW (from outside): 
+
+Three.js BoxGeometry buildPlane for px: u = z? In BoxGeometry, px face: (x, y, z) grid with u along -z? The actual vertex order in BoxGeometry for px (from source): buildPlane('z','y','x', -1, 1...) hmm I don't remember exactly.
+
+Safest: define faces and verify with cross product mentally, or just use a known voxel face table. Common table (from many voxel demos, e.g., threejs voxel geometry tutorial by threejsfundamentals):
+
+```js
+const faces = [
+  { // left (-x)
+    dir: [-1, 0, 0],
+    corners: [ [0,1,0],[0,0,0],[0,1,1],[0,0,1] ], // relative
+  },
+  { // right (+x)
+    dir: [1, 0, 0],
+    corners: [ [1,1,1],[1,0,1],[1,1,0],[1,0,0] ],
+  },
+  { // bottom (-y)
+    dir: [0,-1,0],
+    corners: [ [1,0,1],[0,0,1],[1,0,0],[0,0,0] ],
+  },
+  { // top (+y)
+    dir: [0,1,0],
+    corners: [ [0,1,1],[1,1,1],[0,1,0],[1,1,0] ],
+  },
+  { // back (-z)
+    dir: [0,0,-1],
+    corners: [ [1,0,0],[0,0,0],[1,1,0],[0,1,0] ],
+  },
+  { // front (+z)
+    dir: [0,0,1],
+    corners: [ [0,0,1],[1,0,1],[0,1,1],[1,1,1] ],
+  },
+];
+```
+
+This is from the threejs.org voxel tutorial — known correct with indices (ndx, ndx+1, ndx+2, ndx+2, ndx+1, ndx+3). Corners are relative (0/1) offsets multiplied by size and added to min corner. I'll use exactly this table. Indices per face: (0,1,2, 2,1,3).
+
+Colors per corner: all 4 corners same face color (flat shading per face). 
+
+Builder:
+
+```js
+const FACES = [...as above with dir...];
+function addBox(minx,miny,minz, w,h,d, cTop, cSide, cBot) {
+  const colors = [cSide, cSide, cBot, cTop, cSide, cSide]; // matching faces order: left,right,bottom,top,back,front
+  for (let f=0; f<6; f++) {
+    const face = FACES[f];
+    const col = colors[f];
+    for (let i=0;i<4;i++){
+      const c = face.corners[i];
+      pos.push(minx + c[0]*w, miny + c[1]*h, minz + c[2]*d);
+      col.push(col.r, col.g, col.b);
+    }
+    idx.push(v, v+1, v+2, v+2, v+1, v+3);
+    v += 4;
+  }
+}
+```
+
+Colors as THREE.Color objects preallocated per palette role; push r,g,b (linear after ColorManagement conversion — setHex converts). Good.
+
+Materials: staticMat = MeshBasicMaterial({vertexColors:true, color: tint, fog:true}). tint multiplies vertex colors. 
+
+Wait — does material.color multiply vertex colors in basic material? Yes: diffuseColor = color * vColor when vertexColors true.
+
+Hill: 
+
+```js
+const CELL=0.5, GRID=64, HALF=GRID*CELL/2; // 16
+function hillHeight(x,z){
+  const r = Math.hypot(x,z);
+  if (r >= 19) return 0;
+  // base falloff
+  let t = 1 - smoothstep(8, 19, r); // 1 at r<=8
+  let steps = Math.round(t*7);
+  let h = steps*0.5;
+  // plateau for pagoda
+  if (r < 4.3) h = 3.5;
+  // jitter
+  if (r >= 4.3 && h > 0) {
+    const n = hash(Math.floor(x/CELL), Math.floor(z/CELL));
+    if (n > 0.75 && h < 3.5) h += 0.5; else if (n < 0.2 && h > 0.5) h -= 0.5;
+  }
+  // steps channel carve (front, +z)
+  if (Math.abs(x) < 1.0 && z > 2.2 && z < 15.5) {
+    const tz = (z-2.2)/13.3;
+    const target = Math.max(0, 3.5 - tz*3.5 - 0.25);
+    h = Math.min(h, Math.floor(target*2)/2);
+  }
+  return h;
+}
+```
+
+Hmm wait: plateau r<4.3 → h=3.5; steps channel starts z>2.2 within plateau region (r<4.3 includes z up to 4.3 at x=0). Channel target at z=2.2: 3.25... min(h=3.5, 3.25) → creates step down immediately. Good: steps stair from platform edge.
+
+Then hill boxes: for each cell (i,j): x = -HALF + (i+0.5)*CELL; h = hillHeight(x,z); if h>0: addBox(x-CELL/2, 0, z-CELL/2, CELL, h, CELL, grass, stone, stoneDark?) — top grass, sides stone, bottom stoneDark (mostly hidden). Underwater skirt? Cells with h=0 skipped; water plane covers y=0. Island edge: cells at h=0.5 near edge — fine.
+
+Also add a stone rim ring around island base? skip.
+
+Platform: addBox(-2.5, 3.5, -2.5, 5, 0.5, 5, stone, stone, stoneDark) → top 4.0. Wait plateau h=3.5 → platform from 3.5 to 4.0. Pagoda bodies sit at 4.0.
+
+Recompute pagoda stack with base 4.0:
+- Tier1 body: w2.6 h1.6 → y 4.0..5.6. Roof1: slab1 3.8×0.22 at y 5.6..5.82 (overhang (3.8-2.6)/2=0.6); slab2 3.3×0.2 at 5.82..6.02; corners: 4 blocks 0.55×0.5×0.55 at (±1.6, 6.02..6.52? center (±1.52, 6.27)) lifted. Hmm corner blocks should sit at slab corners lifted above: position x=±(3.3/2-0.1)=±1.55, y from 5.82 to 6.35 (h 0.53) → tops 6.35. 
+- Tier2 body: w1.9 h1.3: y 6.02..7.32? Body base should sit on slab2 top (6.02): y 6.02..7.32. Roof2: slab 2.9×0.2 at 7.32..7.52; slab2 2.5×0.18 7.52..7.70; corners ±1.15, y 7.52..7.95 (h0.43).
+- Tier3 body: w1.3 h1.1: 7.70..8.80. Roof3: slab 2.1×0.18 8.80..8.98; slab 1.8×0.16 8.98..9.14; corners ±0.82 y 8.98..9.34.
+- Finial: base 0.34×0.3 at 9.14..9.44 (gold), mid 0.22×0.28 9.44..9.72, top 0.14×0.2 9.72..9.92, tip 0.08×0.14 → ~10.06.
+
+Roof colors: slab1 roofRed, slab2 roofShadow, corners roofRed with roofDark bottom? corners: top roofRed, sides roofRed, bottom roofDark. Bodies: wood sides, woodDark bottom, top wood (hidden by roof). Actually body top face visible between body top and roof? Roof slab overhangs, body top face at same y as slab bottom — hidden mostly. Use wood for top too.
+
+Add eave underside dark: a thin dark box under each slab? The slab2 bottom face is roofShadow via cBot. Good enough.
+
+Steps boxes: along channel z from 2.4 to 15.2, step every 0.55: z_i; h = hillHeight(0, z_i) (channel value); step box: w 1.6, d 0.55, y 0..h+0.12, stone top, stone sides. Actually make steps slightly wider than channel (channel |x|<1.0 carved; steps w=1.7 → overhang onto grass banks — nice). Lantern posts at every 3rd step: x=±1.05, post woodDark 0.14×0.7×0.14 from step top, lantern box 0.2×0.26×0.2 glowing on top + glow plane.
+
+Lantern positions list built during step loop. Also 2 lanterns flanking pagoda platform entrance (z=±? front z=2.5 area) and maybe 2 on tier1 roof corners? Keep: steps lanterns (~9) + 2 platform + 2 eave (on tier1 roof slab corners, floating on tiny posts? place at corners of roof1 slab: (±1.55, 6.0, ±1.55)? That's where corner blocks are... place eave lanterns hanging under slab2 corners: (±1.45, 5.95, ±1.45) small. Hmm might clip corner blocks at (±1.55, 5.82..6.35). Place eave lanterns at (±1.45, 5.75, 0) and (0, 5.75, ±1.45)? Under slab overhang mid-edges. OK: 4 eave lanterns hanging under tier1 eaves. Total lanterns ~15. Glow instanced 15 planes. Fine.
+
+Lantern box colors: core lanternGold #ffd9a0, sides same, bottom darker #e8a86a? Emissive look via bright color; day dim via material color scale. Lantern material separate (not vertex-colored): merged lantern boxes geometry with plain colors (no vertex colors) + MeshBasicMaterial color = lanternLevel-scaled. But merged geometry without vertex colors + material.color → all lanterns same color — fine, they're all lantern core color. But I want bottom slightly darker... skip, single color fine (they're tiny).
+
+Glow planes: InstancedMesh(PlaneGeometry(1,1), glowMat, N). Per instance matrix: position at lantern pos + y offset 0.15, scale ~1.4 (flicker modulates). Orientation: face camera? Glow planes billboard: rotate to face camera each frame? That's per-frame matrix updates anyway (we update flicker). Billboard: plane.lookAt(camera) per instance — 15 lookAts per frame, cheap, preallocated. Or use Sprite per lantern (15 draw calls — too many? 15 extra draw calls is actually fine honestly, but instanced is cleaner). Instanced + billboard: compute quaternion from camera position: q.setFromUnitVectors? For plane facing camera: m.lookAt(pos, camPos, up) into temp matrix then scale... Use: tempMat.lookAt(lanternPos, camera.position, upVec) — wait Matrix4.lookAt(eye, target, up) creates rotation looking from eye to target. We want plane at lanternPos facing camera: rotation = lookAt(lanternPos, cameraPos). Then compose(pos, quatFromMat, scale). Extract quaternion via quat.setFromRotationMatrix(tempMat). Preallocate all. OK.
+
+Glow texture: canvas 64×64: draw concentric circles with banded alpha: radii bands [30: a0.85, 22: 0.55, 14: 0.3, 7: 0.15]? Actually draw from outside in: fill circle r=30 alpha 0.12, r=22 alpha 0.25, r=14 alpha 0.45, r=7 alpha 0.8, center r=3 alpha 1. Color warm #ffca7a. NearestFilter, no mipmaps. Additive blending, depthWrite false, transparent true.
+
+Sun glow: reuse same texture, Sprite scale 10, opacity per mode (day 0.5 warm, sunset 0.8 orange, night 0.25 blue?). SpriteMaterial color per mode.
+
+Trees: function addTree(x, z): ground h = hillHeight(x,z); trunk: 5 boxes stacked: each h 0.55, w 0.34 tapering 0.34→0.2, jitter offset by hash ±0.07, color woodDark (trunk). Canopy: center at trunk top + 0.9; blob: ~20 boxes: for k in 0..19: dir from hash spherical, radius 1.1*(0.6+0.4hash), y flattened ×0.7; box size 0.5+0.5hash; color blossom or blossomDark by hash>0.5. Also top cap bigger box 1.1×0.5×1.1 blossom. Trees at: (-6.5, -3.5), (6, -5), (-4, 6.5)?? front-left near pond, (7.5, 4.5). Check hillHeight at those points >0.4. r for (-6.5,-3.5) = 7.4 → t=1 → h=3.5 plateau?? r<4.3 plateau; 7.4 → t = 1-smoothstep(8,19,7.4)=1 → steps=7 → h=3.5. Hmm plateau extends to r=8 effectively (t=1 for r≤8). So trees at r 7.4 sit at top plateau height — fine, trees on upper hill. Maybe place some lower: r 10-12 → t = 1-smoothstep(8,19,11)= 1-0.27... smoothstep(8,19,11): x=(11-8)/11=0.2727; s = x²(3-2x)=0.0743*(3-0.545)=0.0743*2.455=0.1825 → t=0.8175 → steps=round(5.72)=6 → h=3.0. OK trees at various heights. Choose: T1 (-6.5,-3.5) h≈3.5; T2 (6.2,-4.8) r=7.85 h≈3.5; T3 (-8.5, 5.5) r=10.1 h≈3.0; T4 (8.8, 4.2) r=9.75 h≈3.0; plus bushes near steps at (±2.2, 6) h≈? channel carve at x=±2.2 not carved (|x|<1); r=6.3 → h=3.5 plateau?? r<8 → 3.5. Hmm plateau radius 8 is big; steps channel descends through plateau region: channel target at z=6: tz=(6-2.2)/13.3=0.286 → target=3.5-1.0-0.25=2.25 → floor 2.0. So steps stair down through plateau. Banks beside steps at h=3.5 while steps at 2.0 — steps cut into hill, banks rise beside — looks fine (steps embedded in hillside).
+
+Bushes at (±2.3, 5.5): bank h=3.5, bush base at 3.5. OK.
+
+Petal zones: around each tree canopy center, volume radius 2.5, heights ground..ground+3. Petals fall to groundY = hillHeight at their x,z (compute per petal on respawn — hash-free, call hillHeight, fine at respawn moments only, not per frame... respawn happens per frame for a few petals — hillHeight is cheap math, no allocation).
+
+Water: plane 100×100 rotated -90° x, y=0.02. ShaderMaterial as planned. Also water under island? Island boxes sit from y=0 up; water at 0.02 would z-fight with box bottom faces at y=0? Bottom faces at y=0 are below water plane 0.02 — hidden underwater, fine (no z-fight since different depths; bottom faces face down, water covers them). Edge cells: box top at 0.5, sides from 0..0.5; water 0.02 intersects sides — reads as shoreline. 
+
+Water shader details:
+
+```glsl
+// vertex
+varying vec3 vWorld;
+void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWorld = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }
+// fragment
+uniform vec3 uDeep; uniform vec3 uSky; uniform float uTime; uniform vec3 uSmudge; uniform vec3 uTint? 
+varying vec3 vWorld;
+void main(){
+  vec2 p = vWorld.xz;
+  float rows = floor(p.y*0.35 + floor(uTime*1.5)*0.06);
+  float band = 0.35 + 0.12*fract(rows*0.37); // hmm keep simple: band = 0.3 + 0.15*step(0.5, fract(rows*0.13));
+  // view-angle glassiness
+  vec3 V = normalize(cameraPosition - vWorld);
+  float fres = pow(1.0 - abs(V.y), 2.0);
+  float refl = clamp(band + fres*0.45, 0.0, 1.0);
+  vec3 col = mix(uDeep, uSky, refl);
+  // pagoda silhouette smudge
+  float d = distance(p, uSmudge.xz);
+  float sm = floor((1.0 - smoothstep(1.5, 7.0, d)) * 5.0) / 5.0;
+  col = mix(col, uDeep*0.6, sm*0.55);
+  // second smudge for tiers offset
+  ...
+  col = floor(col * 10.0) / 10.0; // poster bands
+  gl_FragColor = vec4(col, 1.0);
+}
+```
+
+cameraPosition is available in ShaderMaterial fragment? cameraPosition is a built-in uniform in vertex shader; in fragment it's also declared by three.js for ShaderMaterial? Three.js declares `uniform vec3 cameraPosition;` in the fragment shader prefix for ShaderMaterial? Yes — WebGLProgram adds cameraPosition to fragment prefix for ShaderMaterial (it's in the standard prefix: "uniform vec3 cameraPosition;" appears in fragment prefix when... let me recall: prefixFragment includes cameraPosition only if `parameters.frag` ... In three.js, fragment shader prefix includes `uniform vec3 cameraPosition;` — yes, it's included in the standard fragment prefix (used by envmap etc.). For raw ShaderMaterial, prefixFragment includes cameraPosition? The standard prefix for ShaderMaterial fragment does include cameraPosition (I believe since r0.15x it's there: prefixFragment contains 'uniform vec3 cameraPosition;' — yes, in WebGLProgram.js, prefixFragment includes cameraPosition and isOrthographic). Confirmed: three.js adds `uniform vec3 cameraPosition;` to fragment shaders of ShaderMaterial. Good.
+
+Smudge center: pagoda at (0, ~7, 0) → reflection smudge on water near island center front: uSmudge = (0, 0, 2)? Water around island; smudge where pagoda's reflection would be: directly below pagoda is island (no water). Reflection appears on water around island edges... "pond mirrors the sunset" + "pagoda's silhouette suggested as a darkened smudge". Place smudge at (0,0,3.5) front of island where water meets steps — near steps foot. Eh, place at (0, 0, 4) radius ~6. It'll darken water near front shore — reads as reflection hint. Also add sky reflection bands tinted per mode (sunset → water picks up orange via uSky). 
+
+Also "glassy pond": add a subtle stepped sparkle: high fresnel rows glint toward sun color? Add uSun uniform: glint = step(0.97, fract(rows*0.31 + fres)) * ... keep simple: col += uSun * step(0.96, fract(p.x*0.23+p.y*0.31 + floor(uTime*1.5)*0.13)) * 0.15 * fres; — sparse stepped sparkles. OK.
+
+Stars: dome: for i in 160: azimuth random, elevation: y = 12 + rand*50, radius 60-75, ensure y>8. aSize 1..3 (inner px), aPhase rand. Color: pale blue-white #cfe0ff; night opacity via uniform.
+
+Sun sprite: position: day (30, 38, -40)? Put sun at fixed azimuth behind pagoda (so orbit reveals it): direction azimuth -40°... place at spherical: dist 70, elevation per mode: day 55°, sunset 12°, night moon 40°. Position lerped. Colors: day #fff6d8, sunset #ffb347, night #e8ecff (moon). Also moon could be crescent? Square moon fine (pixel style). Maybe night moon slightly smaller scale — lerp scale too.
+
+Fog near/far per mode? Keep fixed near 30 far 85. Night fog color dark blue.
+
+Transition lerp: cur object with Colors: sky, fog, tint, waterDeep, waterSky, sun, glowColor?; numbers: lantern, glow, stars, sunElev, sunScale. Lerp numbers with same k. Apply each frame (cheap).
+
+Buttons set tgt = MODES[name]; also set active class.
+
+Initial mode: sunset? "dusk" is the described scene! "pagoda ... at dusk". Start at sunset — matches the brief ("at dusk", "pond mirrors the sunset"). Yes, start sunset.
+
+Auto-drift: theta += dt*0.04 until interacted.
+
+Reduced motion: const RM = matchMedia('(prefers-reduced-motion: reduce)').matches; if RM: no drift, petals static (render one frame of matrices then never update — or hide petals? Keep them frozen mid-air: update once at init), flicker off (constant glow scale), stars blink off (uTime frozen → set uTime constant; blink frozen at some value — set uTime=0 → all stars phase fract(0+phase) — some visible some not; acceptable, or force vA=1 when RM via uniform uBlink=0 → vA=1). Add uniform uBlink (1 normal, 0 reduced) → vA = mix(1.0, step(...), uBlink).
+
+Petals when RM: still update? No — freeze: skip instanceMatrix updates after initial set. But petals need initial matrices set once. Fine.
+
+Also transitions: keep (user-initiated). 
+
+Performance check: inner res ~ (1920/3)=640 × (1080/3)=360 → 230k px, ~8 draw calls, trivial. Static geometry ~80k verts — one draw call, fine. Hill build time: 4536 cells × hillHeight — fast.
+
+Memory: fine.
+
+Now UI CSS: 
+
+```css
+html,body{margin:0;height:100%;overflow:hidden;background:#000;}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;image-rendering:pixelated;}
+```
+Wait — canvas CSS size: renderer.setSize(w,h,false) doesn't set style; CSS width/height 100% handles it. image-rendering: pixelated on canvas — but we're doing the blit pass ourselves at full res, so canvas backing = full res; upscaling not needed via CSS. The pixelation happens in the blit (nearest). So image-rendering CSS irrelevant but harmless. Actually since blit renders at full device res, the canvas shows crisp nearest-upscaled pixels. Good.
+
+UI overlay:
+
+```css
+#ui{position:fixed;inset:0;pointer-events:none;font-family:ui-monospace,Menlo,Consolas,monospace;}
+#title{position:absolute;top:14px;left:16px;color:#fff;...text-shadow for readability over scene}
+#panel{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);display:flex;gap:10px;pointer-events:auto;}
+button{min-width:72px;min-height:48px;font:inherit;font-size:14px;letter-spacing:2px;text-transform:uppercase;background:rgba(10,14,24,.72);color:#e8ecf4;border:2px solid rgba(255,255,255,.35);border-radius:6px;cursor:pointer;}
+button.active{background:#f2a65a;color:#1a1208;border-color:#ffd9a0;}
+button:focus-visible{outline:3px solid #fff;}
+#hint{position:absolute;bottom:84px;...small}
+```
+
+Title with text-shadow dark outline for contrast over sky.
+
+Buttons thumb-sized: 72×48+ good.
+
+Pointer handling:
+
+```js
+const pointers = new Map();
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, {x:e.clientX,y:e.clientY}); interacted = true; });
+pointermove: if one pointer: dtheta = dx*0.005, dphi = dy*0.005; if two: pinch zoom via distance ratio.
+pointerup/cancel: delete.
+wheel: dist *= Math.pow(1.0015, -e.deltaY)? clamp.
+```
+
+Prevent default touch scrolling: CSS touch-action: none on canvas.
+
+Camera clamp: phi [0.2, 1.5], dist [9, 42].
+
+Target: (0, 4.6, 0).
+
+Initial camera: theta 0.6, phi 0.9, dist 26.
+
+Now mode definitions:
+
+```js
+const MODES = {
+  day: {
+    sky: 0x8fd0e8, fog: 0xaadcee, tint: 0xffffff,
+    deep: 0x2e6f8e, water: 0x7fc8de, sun: 0xfff2c8, glow: 0xffe9b8,
+    lantern: 0.25, glowA: 0.12, stars: 0.0, sunEl: 52, sunScale: 3.2, glowSun: 0.35
+  },
+  sunset: {
+    sky: 0xf2a35e, fog: 0xeab183, tint: 0xffd2a0,
+    deep: 0x8a4a3a, water: 0xf2b06a, sun: 0xffc46a, glow: 0xffb36a,
+    lantern: 0.55, glowA: 0.45, stars: 0.15, sunEl: 14, sunScale: 3.6, glowSun: 0.7
+  },
+  night: {
+    sky: 0x0e1830, fog: 0x1a2a48, tint: 0x6a7fae,
+    deep: 0x12233c, water: 0x2a4a6e, sun: 0xe6ecff, glow: 0xffc47a,
+    lantern: 1.0, glowA: 0.85, stars: 1.0, sunEl: 38, sunScale: 2.4, glowSun: 0.3
+  }
+};
+```
+
+Tint night 0x6a7fae — moon-blue ambient lift; silhouettes readable. Lantern material color: core #ffd9a0 × lantern level (min 0.2 so visible in day as paper). Glow opacity glowA.
+
+Water uSky per mode = water color (reflection tint), uDeep = deep. Sunset water mirrors sunset: water 0xf2b06a nice.
+
+Stars opacity night 1.
+
+Also fog near/far maybe per mode: night fog closer (far 70) for moodier? Keep fixed.
+
+Palette list (for the "define palette first" requirement, comment in code):
+
+```
+ROOF #d64533 / ROOF_D #9c2f24
+WOOD #7a5230 / WOOD_D #54381f
+STONE #9aa0a8 / STONE_D #6b7078
+GRASS #7fae5a / GRASS_D #5d8a42
+BLOOM #ffc7d4 / BLOOM_D #f2a0b4
+GOLD #e8c35a
+LANTERN #ffd9a0
+INK #1a1208 (UI)
++ per-mode sky/fog/water/sun sets
+```
+
+~14 base + 3×5 mode colors. "On the order of a dozen" — close enough; comment that mode colors are graded toward palette.
+
+Hash function:
+
+```js
+function hash2(x, y){ let h = Math.sin(x*127.1 + y*311.7)*43758.5453; return h - Math.floor(h); }
+```
+
+Deterministic — good for consistent scene.
+
+smoothstep helper.
+
+Petal update:
+
+```js
+const PETALS = 130;
+petal data: Float32Array px,py,pz, vy(fall speed), sway phase, rotSpeed, scale, treeIdx
+respawn(i): pick tree, angle rand, radius rand*2.2, y = ground+2.5+rand*2, ground = hillHeight(x,z)
+update(dt): py -= fall*dt; px += windX*dt + sin(t*swayFreq+phase)*dt*0.3; pz += ...; rot += rotSpeed*dt; if py < ground+0.05 respawn.
+matrix: pos.set(px,py,pz); euler.set(rot, rot*0.7, phase); quat.setFromEuler; scale.setScalar(s); m.compose(pos,quat,scale); inst.setMatrixAt(i,m);
+```
+
+Wind direction fixed (e.g., +x 0.35, +z 0.1). Chunky motion guaranteed by low-res buffer.
+
+InstancedMesh petals: PlaneGeometry(0.22, 0.22), material bloom color DoubleSide. frustumCulled = false (instances move). Same for glow instanced (positions fixed but billboard rotates — set frustumCulled false to be safe).
+
+Glow instanced update per frame: for each lantern: flick = RM? 1 : 1 + 0.14*Math.sin(t*7+phase) → quantize? fine. scale = base*flick; billboard quaternion; compose; setMatrixAt. 15 instances trivial.
+
+Lantern glow base scale 1.5; eave lanterns 1.1.
+
+Stars material:
+
+```js
+new THREE.ShaderMaterial({
+  uniforms: { uTime:{value:0}, uOpacity:{value:0}, uBlink:{value:1}, uColor:{value:new THREE.Color(0xcfe0ff)} },
+  vertexShader: `attribute float aSize; attribute float aPhase; uniform float uTime; uniform float uBlink; varying float vA;
+    void main(){ float blink = step(0.35, fract(uTime*0.22 + aPhase)); vA = mix(1.0, blink, uBlink); vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = aSize; gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform float uOpacity; uniform vec3 uColor; varying float vA;
+    void main(){ gl_FragColor = vec4(uColor, vA * uOpacity); }`,
+  transparent: true, depthWrite: false
+});
+```
+
+Points geometry: position attr + aSize + aPhase.
+
+Note: gl_PointSize in pixels of the inner framebuffer — good.
+
+Blit scene:
+
+```js
+const blitCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+const blitScene = new THREE.Scene();
+const blitQuad = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.MeshBasicMaterial({map: target.texture}));
+blitQuad.frustumCulled = false;
+```
+
+target.texture minFilter/magFilter = NearestFilter, generateMipmaps=false.
+
+Render loop:
+
+```js
+renderer.setRenderTarget(target);
+renderer.render(scene, camera);
+renderer.setRenderTarget(null);
+renderer.render(blitScene, blitCam);
+```
+
+renderer.autoClear default true — fine (clears both passes; blit scene background null → clear color black? Set blitScene.background = null and renderer clear color... The blit quad covers whole screen so clear color irrelevant. But inner pass clear color = scene.background (sky). Good.
+
+Tone mapping: default NoToneMapping — colors as authored. outputColorSpace SRGB — final blit converts linear→sRGB. Render target texture holds linear values; blit material map sampled linear, output converted. Correct pipeline.
+
+One concern: MeshBasicMaterial map (target texture) — texture.colorSpace default NoColorSpace → sampled raw linear. Good.
+
+Resize:
+
+```js
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  const dpr = Math.min(devicePixelRatio||1, 2);
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(w, h, false);
+  const scale = Math.max(w,h) > 1500 ? 4 : 3;
+  const iw = Math.max(96, Math.round(w/scale)), ih = Math.max(96, Math.round(h/scale));
+  target.setSize(iw, ih);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+```
+
+target.setSize resizes texture — filters preserved. 
+
+Mode switching also updates button active classes.
+
+Transition: on setMode(name): tgtMode = MODES[name]; cur lerps each frame: k = 1 - Math.pow(0.001, dt)?? Use k = 1 - Math.exp(-dt*2.5). For colors: cur.sky.lerp(tgt.sky, k) — THREE.Color.lerp exists. Numbers: cur.lantern += (tgt.lantern-cur.lantern)*k.
+
+Sun position: elevation lerp: cur.sunEl → compute sun pos from azimuth fixed (az = -0.9 rad?) Let's place sun azimuth so it's visible from initial camera: camera theta 0.6 looks toward... camera at theta 0.6 around target; camera looks at target; sun opposite side visible when camera azimuth faces it. Sun azimuth: place at angle -2.2 (behind-left). Whatever — it'll be seen during orbit. Sun pos: dist 70: x = 70*sin(az)*cos(el), y = 70*sin(el), z = 70*cos(az)*cos(el). el in radians from cur.sunEl (degrees). Lerp sunEl number.
+
+Sun sprite scale lerp too.
+
+Also sun glow sprite opacity = glowSun * (night? bluish color) — SpriteMaterial color = cur.glow? Use cur.sun color for glow sprite color, opacity cur.glowSun.
+
+Fog: scene.fog = new THREE.Fog(cur.fog, 30, 85); update color each frame.
+
+scene.background = cur.sky (a Color we mutate) — assign once: scene.background = curSkyColor (same object mutated). Yes, background accepts Color and it's used directly? scene.background Color is copied? In WebGLRenderer, background Color is used via setClearColor(color) each render — reads current values. Mutating cur.sky works.
+
+Water uniforms: uDeep.value.copy(cur.deep) etc.
+
+Lantern material color: lanternMat.color.copy(LANTERN_CORE).multiplyScalar(cur.lantern) — multiplyScalar on Color scales rgb. Day 0.25 → dim warm paper. Night 1.0 bright. Maybe night 1.2 for pop? clamp fine.
+
+Static tint: staticMat.color.copy(cur.tint).
+
+Check night readability: tint 0x6a7fae ≈ (0.42,0.5,0.68) — roofs red × tint → dark maroon, readable against dark sky; lantern glows carry. Grass → dark green. OK.
+
+Also add subtle "warm lift near steps": the lantern glow sprites along steps do this. 
+
+Petals visible at night? tint doesn't affect petal material (separate material, color bloom fixed) — at night bright pink petals would glow oddly. Multiply petal material color by tint too: petalMat.color.copy(BLOOM).multiplyScalar? Better: petalMat.color.copy(cur.tint)?? No — petals should be bloom-colored tinted by ambient: petalMat.color.copy(BLOOM).multiplyScalar(cur.tint)?? tint is a Color; multiply colors: petalMat.color.copy(BLOOM).multiply(cur.tint)? Color.multiply multiplies rgb components — day: bloom×white = bloom; night: bloom×(0.42..) = dim pink. 
+
+Same for lantern glow sprite color: glowMat color = glow core × tint-ish? Glow additive at night should stay warm bright — glow color fixed warm, opacity scales. Day low opacity. OK.
+
+Stars color fixed pale.
+
+Sun sprite color = cur.sun.
+
+Now — "Never render text or buttons inside the pixel buffer" — DOM overlay. ✓.
+
+Console clean: no errors; ensure no deprecated APIs. three r170: outputColorSpace exists; ColorManagement default on. InstancedMesh fine. ShaderMaterial fine.
+
+Edge: pointer events on buttons shouldn't trigger canvas orbit — buttons are DOM above canvas; pointerdown on button doesn't reach canvas listener (canvas listener only on canvas element). ✓ But canvas covers full screen under UI; UI has pointer-events none except panel/buttons. ✓
+
+Wheel listener on canvas with {passive:true}? Need preventDefault? Not necessary; just zoom. passive true fine.
+
+Pinch: track two pointers; on move compute dist ratio vs last; dist /= ratio? zoom: camDist *= lastDist/curDist.
+
+Also double-tap? skip.
+
+Auto-drift resume after idle? "may auto-drift until touched" — once touched, stop forever. Simple.
+
+Frame loop with clock; dt clamp 0.05.
+
+Let me also add a subtle vignette? Could add in blit shader — skip, keep simple. Maybe add in water only.
+
+Petal ground check: hillHeight(px,pz) — petals over water (r>19) → ground 0 → they fall to water y=0.05 then respawn. Fine.
+
+Petal respawn uses Math.random — fine (not per-frame allocation).
+
+Now, counts: hill boxes ~3000, pagoda ~40, trees 4×~30=120, bushes 3×8=24, steps ~24, lantern posts ~30, platform, rim. Total ~3250 boxes × 24 verts = 78k verts, 117k idx. One geometry. Build time trivial.
+
+Merge everything static into ONE geometry including lantern boxes? Lanterns need separate material (un-tinted emissive) → separate merged geometry (~15 lantern boxes + posts? posts can be static wood). Lantern boxes only in emissive geometry.
+
+Glow instanced planes: 15.
+
+Let me now also double check the FACES table orientation with indices (0,1,2, 2,1,3):
+
+From threejs voxel tutorial (known-good):
+
+```js
+const faces = [
+  { // left
+    uvRow: 0,
+    dir: [ -1,  0,  0, ],
+    corners: [
+      [ 0, 1, 0 ],
+      [ 0, 0, 0 ],
+      [ 0, 1, 1 ],
+      [ 0, 0, 1 ],
+    ],
+  },
+  { // right
+    dir: [  1,  0,  0, ],
+    corners: [
+      [ 1, 1, 1 ],
+      [ 1, 0, 1 ],
+      [ 1, 1, 0 ],
+      [ 1, 0, 0 ],
+    ],
+  },
+  { // bottom
+    dir: [  0, -1,  0, ],
+    corners: [
+      [ 1, 0, 1 ],
+      [ 0, 0, 1 ],
+      [ 1, 0, 0 ],
+      [ 0, 0, 0 ],
+    ],
+  },
+  { // top
+    dir: [  0,  1,  0, ],
+    corners: [
+      [ 0, 1, 1 ],
+      [ 1, 1, 1 ],
+      [ 0, 1, 0 ],
+      [ 1, 1, 0 ],
+    ],
+  },
+  { // back
+    dir: [  0,  0, -1, ],
+    corners: [
+      [ 1, 0, 0 ],
+      [ 0, 0, 0 ],
+      [ 1, 1, 0 ],
+      [ 0, 1, 0 ],
+    ],
+  },
+  { // front
+    dir: [  0,  0,  1, ],
+    corners: [
+      [ 0, 0, 1 ],
+      [ 1, 0, 1 ],
+      [ 0, 1, 1 ],
+      [ 1, 1, 1 ],
+    ],
+  },
+];
+```
+
+with indices: `indices.push(ndx, ndx+1, ndx+2, ndx+2, ndx+1, ndx+3);` — yes that's the tutorial's exact code. Trust it.
+
+Face order mapping for colors: [left(-x), right(+x), bottom(-y), top(+y), back(-z), front(+z)] → colors [side, side, bottom, top, side, side]. ✓
+
+Shade bands baked into palette: instead of multiplying shade factors at build time, I could just use three palette shades per role (top/side/bottom colors defined in palette). That's cleaner "hard bands": e.g., roof: top ROOF, side ROOF_S (darker), bottom ROOF_D. Define palette with explicit triples:
+
+```
+roof:  { t:0xd64533, s:0xb03a2c, b:0x8e2a20 }
+wood:  { t:0x8a5f38, s:0x6b4a2f, b:0x4a3220 }
+stone: { t:0xa8adb5, s:0x8a8f96, b:0x5f646b }
+grass: { t:0x86b45e, s:0x6a9a4a, b:0x4f7a3a }
+bloom: { t:0xffd0dc, s:0xf6b8c8, b:0xe08ba0 }
+gold:  { t:0xf2d06a, s:0xd9a848, b:0xa87a30 }
+```
+
+That's 18 colors + mode sets. Slightly more than a dozen but each role has 3 bands — "quantize lighting to two or three hard bands" satisfied by design. Hmm "tiny harmonious palette... on the order of a dozen colors" — 18 is "on the order of" a dozen-ish. Could trim: grass only used on hill tops; could reuse... keep, it's fine. Actually let me trim wood to reuse for trunk (trunk = wood band). OK.
+
+Night tint multiplies all — bands preserved. ✓
+
+Water plane geometry: PlaneGeometry(120,120) rotated. Position y=0.02.
+
+Island edge: cells with h>0 up to r<19; water beyond. Shoreline: h=0.5 boxes at r 17-19. ✓
+
+Also add stone steps rim at water edge? skip.
+
+Steps: z from 2.4 to 15.0 step 0.55 → 23 steps. Each: addBox(-0.85, 0, z-0.27, 1.7, h+0.12, 0.55, stone...) where h = hillHeight(0,z). Wait hillHeight at channel: target = max(0, 3.5 - tz*3.5 - 0.25) floored to 0.5 steps. At z=2.4: tz=0.015 → target≈3.2 → h=min(3.5, 3.0)=3.0? floor(3.2*2)/2 = floor(6.4)/2=6/2=3.0. Step box top 3.12. Platform top 4.0 — gap! Steps should start near platform top. Platform edge at z=2.5 (platform 5 wide → z from -2.5 to 2.5). First step at z=2.5 should be ~3.9. Adjust channel: target = 3.9 - tz*3.9 - 0.1? At z=2.5 tz=0 → 3.8 → floor→3.5. Hmm plateau h=3.5 at r<4.3... at (0,2.5) r=2.5 <4.3 → h=3.5 (plateau overrides). Channel min(3.5, target). target at z=2.5 = 3.8 → h stays 3.5. Step box top = 3.5+0.12=3.62 vs platform 4.0 — still gap 0.38. Make first steps taller: step box height h+0.5 for z<3.5? Simpler: steps top = h + 0.12, and add a stone landing box bridging platform to first step: box at z=2.6, y 3.5..3.9? Let me just make channel target start at 4.0: target = 4.0 - tz*4.0, and plateau override min... at z=2.5: target 4.0, h=min(3.5, 4.0)=3.5. The issue is plateau forces 3.5. Extend channel carve to override plateau: if in channel: h = floor(min(plateauOrSlope, target)*2)/2 where target starts 3.9: at z=2.5 target=3.9-0=3.9 → h=min(3.5,3.9)=3.5. Still 3.5.
+
+Alternative: steps boxes themselves bridge: step box height = h + extra where extra makes top match a smooth stair from 4.0 down to 0: stepTop(z) = 4.0 - tz*4.0 + 0.12, box from 0 to stepTop. Then steps float above carved channel slightly — embedded look since channel h ≈ stepTop-0.12. Box height up to 4 — fine. So steps don't need hillHeight; just stair function. Channel carve ensures banks beside steps are lower than stair tops near top (so stairs read as cut into hill). Channel target = stairTop - 0.15. At z=2.5: 3.85 → but plateau 3.5 < 3.85 → h=3.5, stair top 3.97+0.12... stairTop(2.5)=4.0-0+... tz=(z-2.5)/12.5. Let me define: z0=2.5, z1=15.0, tz=(z-z0)/(z1-z0), stairTop = (1-tz)*3.9 + 0.1 → from 4.0 to 0.1. Step box: y0=0, y1=stairTop. Channel carve: h = min(h, floor((stairTop-0.18)*2)/2) → at z=2.5: min(3.5, floor(3.82*2)/2=3.5) = 3.5. At z=5: tz=0.2 → stairTop=3.22, carve floor(3.04*2)/2=3.0; slope h at (0,5): r=5<8 → 3.5 → h=3.0. Step top 3.22 above bank 3.0 ✓. At z=8: tz=0.44 → stairTop=2.27, carve 2.0; slope r=8 → t=1 → 3.5 → h=2.0 ✓. At z=11: tz=0.68 → stair 1.41, carve 1.0; slope r=11 → h≈3.0?? smoothstep(8,19,11)=0.1825 → t=0.8175 → steps=round(5.72)=6 → 3.0 → carve min(3.0, 1.0)=1.0 ✓. At z=14: tz=0.92 → stair 0.42, carve floor(0.24*2)/2=0 → h=0 → water shore ✓. Steps end at water. 
+
+Lantern posts beside steps at z = 3.5, 5.5, 7.5, 9.5, 11.5, 13.5 alternating x=±1.05: post base y = stairTop(z)-0.1 (sit on step edge), post h 0.55, lantern on top. Compute stairTop in JS for placement. ~6 step lanterns + 2 platform flankers (at (±1.3, 3.5, 2.8)? on plateau beside platform: base y=3.5) + 4 eave hangers under tier1 roof (y≈5.7, at (±1.4,±1.4)? under slab1 overhang: slab1 3.8 wide → overhang to ±1.9; hanger at (±1.55, 5.62, ±1.55)? corner blocks occupy (±1.55, 5.82..6.35). Hangers at mid-edges: (±1.6, 5.65, 0) and (0, 5.65, ±1.6) — under slab1 (slab1 spans ±1.9, bottom 5.6) → lantern hangs at 5.65..5.35? Lantern box 0.2 tall centered 5.5: 5.4..5.6 just under slab bottom 5.6 ✓. Plus tiny hanger string box 0.05×0.15. OK 4 eave lanterns. Total 12 lanterns.
+
+Glow instanced 12.
+
+Tree placement check hillHeight: T1 (-6.5,-3.5): r=7.35 <8 → 3.5. T2 (6.2,-4.8): r=7.84 → 3.5. T3 (-8.5,5.5): r=10.1 → ~3.0. T4 (8.8,4.2): r=9.73 → t=1-smoothstep(8,19,9.73): x=0.157, s=x²(3-2x)=0.0247*2.686=0.0663 → t=0.934 → steps=round(6.53)=7?? round(0.934*7)=round(6.54)=7 → h=3.5. Hmm jitter may adjust. Fine — trees at 3-3.5 height. Canopy top ~3.5+2.5+1 = 7 — below pagoda top 10, beside it. Good composition.
+
+Bushes: (±2.4, 5.0): r=5.5 → h=3.5 (plateau r<8). Beside steps (channel |x|<1 only) → bank 3.5, bush base 3.5. ✓ Also 2 bushes near pond shore (3.5, 14.5)? r=14.9 → t=1-smoothstep(8,19,14.9): x=0.627, s=0.393*1.746=0.686 → t=0.314 → steps=round(2.2)=2 → h=1.0. Bush base 1.0 near water ✓.
+
+Petal trees list with canopy centers computed after placement.
+
+Now write everything. Also handle context: `renderer = new THREE.WebGLRenderer({canvas, antialias:false, powerPreference:'high-performance'})`.
+
+Check: renderer.setPixelRatio + setSize(w,h,false): drawingBufferSize = w*dpr. Blit renders at full res — nearest upscale from inner target sampled at full res → chunky pixels ✓.
+
+devicePixelRatio cap 2 ✓ ("cap the final pixel ratio ~2 max").
+
+Inner target: no mipmaps, NearestFilter both, depthBuffer true (needed), stencil false.
+
+WebGLRenderTarget(w,h,{minFilter:NearestFilter, magFilter:NearestFilter, generateMipmaps:false, depthBuffer:true, stencilBuffer:false}).
+
+Format default RGBA. 
+
+One more: renderer.render into target then to screen — same renderer, fine.
+
+Auto-drift also should not fight user: after interacted, drift off.
+
+Buttons: also keyboard accessible (real <button>). ✓
+
+Title: "PIXEL PAGODA" + subtitle "a tiny voxel dusk". Hint line: "drag to orbit · scroll / pinch to zoom".
+
+Let me write the water shader carefully:
+
+```js
+const waterMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uDeep: { value: new THREE.Color() },
+    uSky: { value: new THREE.Color() },
+    uSun: { value: new THREE.Color() },
+    uTime: { value: 0 },
+    uSmudge: { value: new THREE.Vector3(0, 0, 5.5) },
+  },
+  vertexShader: `
+    varying vec3 vWorld;
+    void main() {
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorld = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: `
+    uniform vec3 uDeep; uniform vec3 uSky; uniform vec3 uSun;
+    uniform float uTime; uniform vec3 uSmudge;
+    varying vec3 vWorld;
+    void main() {
+      vec2 p = vWorld.xz;
+      float tick = floor(uTime * 1.5);           // chunky time steps
+      float row = floor(p.y * 0.30 + tick * 0.05);
+      float band = 0.30 + 0.18 * step(0.5, fract(row * 0.137));
+      vec3 V = normalize(cameraPosition - vWorld);
+      float fres = pow(1.0 - abs(V.y), 2.0);
+      float refl = clamp(band + fres * 0.5, 0.0, 1.0);
+      vec3 col = mix(uDeep, uSky, refl);
+      // pagoda silhouette smudge (a hint, not a mirror)
+      float d1 = distance(p, uSmudge.xz);
+      float s1 = floor((1.0 - smoothstep(2.0, 8.0, d1)) * 5.0) / 5.0;
+      col = mix(col, uDeep * 0.55, s1 * 0.6);
+      float d2 = distance(p, uSmudge.xz + vec2(0.0, -2.5));
+      float s2 = floor((1.0 - smoothstep(1.0, 5.0, d2)) * 5.0) / 5.0;
+      col = mix(col, uDeep * 0.45, s2 * 0.5);
+      // sparse stepped sun glints
+      float gl = step(0.965, fract(p.x * 0.211 + p.y * 0.307 + tick * 0.13));
+      col += uSun * gl * fres * 0.25;
+      col = floor(col * 12.0) / 12.0;           // poster bands
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+```
+
+Hmm smoothstep in smudge then floor — gives banded smudge, pixel-y. ✓
+
+Water plane 120×120 — beyond fog far 85 → but ShaderMaterial without fog → distant water stays colored vs fogged sky... mismatch at horizon: water color vs sky color at far distance. Water uSky ≈ fog color per mode? Set uSky close to fog color so horizon blends. Day: fog 0xaadcee, water sky-reflect 0x7fc8de — distant water darker than sky → visible edge. Add distance fade in shader: col = mix(col, uFog, smoothstep(30.0, 80.0, distance(cameraPosition, vWorld)))? Add uFog uniform = fog color, manual fog. ✓ Add that.
+
+Also island shore: water meets hill boxes — fine.
+
+Sun glints at night: uSun = moon color, subtle ✓.
+
+Now stars positions: 
+
+```js
+for (i<160): az = rand*2π; el = 0.15 + rand*1.2 (rad from horizon); r = 62 + rand*14;
+x = r*cos(el)*sin(az)... y = r*sin(el) ensure > 6; z = r*cos(el)*cos(az);
+```
+
+Stars at r~70 — beyond fog far but stars material fog:false ✓. But are they inside camera far plane? camera far = 200 ✓.
+
+Sun sprite at dist 70 ✓.
+
+Sky: single background color. Maybe add a subtle two-tone: huge gradient plane? Skip — fog + background fine. Actually a nice touch: a "sky band" — a huge plane at y=40 with basic material horizon color? Meh. Keep clean.
+
+Clouds: skip (palette).
+
+Now the glow texture generation:
+
+```js
+function makeGlowTexture() {
+  const s = 64, cv = document.createElement('canvas'); cv.width = cv.height = s;
+  const g = cv.getContext('2d');
+  const bands = [ [30, 0.10], [22, 0.22], [14, 0.42], [8, 0.70], [4, 0.95] ];
+  for (const [r, a] of bands) {
+    g.globalAlpha = a;
+    g.fillStyle = '#ffca7a';
+    g.beginPath(); g.arc(s/2, s/2, r, 0, Math.PI*2); g.fill();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  return tex;
+}
+```
+
+CanvasTexture colorSpace: default NoColorSpace? For color textures used in map, should set colorSpace = SRGBColorSpace so it's converted... For additive glow, either fine. Set tex.colorSpace = THREE.SRGBColorSpace for correctness.
+
+Glow material: MeshBasicMaterial({map: glowTex, transparent:true, blending:AdditiveBlending, depthWrite:false, side:DoubleSide? front fine, fog:false}). Opacity per mode. Instanced planes billboarded.
+
+Note: additive + opacity works (alpha multiplies in blend? AdditiveBlending: src*alpha + dst? With transparent, srcFactor SRC_ALPHA, dst ONE → yes opacity scales contribution ✓).
+
+Sun glow sprite: SpriteMaterial({map:glowTex, color: cur.sun, transparent:true, opacity, blending:Additive, depthWrite:false, fog:false}).
+
+Sun square sprite: SpriteMaterial({color: cur.sun, fog:false}). Sprite scale set via sprite.scale.set(s,s,1).
+
+Sprites render in inner target at low res → chunky ✓.
+
+Petal geometry: PlaneGeometry(0.22,0.22) — petals ~0.22 world → at inner res ~ (innerW/worldVisible)... camera dist 26, fov 45 → visible height ≈ 2*26*tan(22.5°) ≈ 21.5 world units → innerH 360 px → 16.7 px/unit → petal ≈ 3.7 inner px ≈ 11 screen px. Chunky ✓. Lantern glow scale 1.5 → 25 inner px ✓.
+
+Hill cell 0.5 → 8 inner px per cell — big chunky voxels ✓. 
+
+Camera fov 45, near 0.1, far 200.
+
+Now petal spin: rotation via Euler each petal — preallocated THREE.Euler, Quaternion, Vector3, Matrix4.
+
+InstancedMesh petals: `new THREE.InstancedMesh(geo, mat, N)`; set instanceMatrix usage DynamicDrawUsage.
+
+Glow instanced similar.
+
+Zero allocations in loop: verify — update functions use only preallocated temps; Color.lerp in-place; uniform value copies in-place. ✓ Math.sin etc fine.
+
+Mode transition also animates water uniforms (copy each frame) ✓.
+
+Initial cur = deep copy of sunset mode; tgt = sunset.
+
+setMode: tgtMode = MODES[m]; buttons active class.
+
+Frame:
+
+```js
+const k = 1 - Math.exp(-dt * 2.2);
+lerpParams(cur, tgt, k);
+applyParams();
+// drift
+if (!interacted && !RM) theta += dt * 0.045;
+// petals
+if (!RM) updatePetals(dt, t);
+// glow flicker
+updateGlows(t);
+// stars time
+starMat.uniforms.uTime.value = RM ? 0 : t;
+water uTime = RM? 0 : t;
+// camera
+phi clamp; position from spherical; lookAt
+// render two passes
+```
+
+applyParams each frame (cheap): background/fog/tint/lantern/glow opacity/petal color/water uniforms/sun pos+scale+color+opacity/stars opacity.
+
+Sun position from cur.sunElDeg: el = rad; az fixed -2.4? Let me choose az so sun is visible initially: camera theta=0.7 → camera pos = target + dist*(sin(theta)*sin(phi)... camera at azimuth 0.7 rad ≈ 40°. Looking at origin from az 40° → view direction toward az 40°+180°=220°. Sun visible if in view cone: place sun az ≈ 220°± → az = 3.8 rad? Let me just place sun az = 2.6 rad (150°)... camera looks from az40 toward center; things at az 220 are behind center from camera → visible in frame center. Sun az 3.84 rad (220°) ✓. Elevation day 50°, sunset 13°, night 35°.
+
+Sun dist 70: pos = (70 sin(el) ... ) with horizontal dir (sin(az), cos(az)): x = 70*cos(el)*sin(az), z = 70*cos(el)*cos(az), y = 70*sin(el). Sunset el 13° → y=15.7, horizontal 68 → x=68*sin(220°)=-43.7, z=68*cos(220°)=-52. Low over horizon behind pagoda ✓ nice sunset composition.
+
+Night moon el 35° az maybe different (az 2.2)? Keep same az, fine.
+
+Sprite at that position, scale cur.sunScale.
+
+Also stars only upper hemisphere ✓.
+
+Now hillHeight must be defined BEFORE hill build and reused for trees/steps/petals. ✓
+
+Channel carve uses stairTop function — define stairTop(z) helper.
+
+Also plateau: r<4.3 → 3.5. But channel at z 2.5..4.3 within plateau: carve min(3.5, floor((stairTop-0.18)*2)/2): at z=3: tz=0.04 → stairTop=3.77 → carve floor(3.59*2)/2 = floor(7.18)/2=3.5 → h=3.5. Hmm carve ineffective near top (banks stay 3.5 while stair top 3.77 → step sticks up 0.27 above bank — reads as stair on plateau, fine). At z=4: tz=0.12 → stair 3.53 → carve floor(3.35*2)/2=3.0 → bank 3.0, stair 3.53 ✓ embedded.
+
+Wait, plateau r<4.3: at (0,4) r=4 <4.3 → plateau 3.5, carve → min(3.5, 3.0)=3.0 ✓.
+
+At z=4.5: r=4.5 → slope t=1 → 3.5, carve: tz=0.16 → stair 3.36 → carve floor(3.18*2)/2=3.0 → 3.0 ✓.
+
+Good.
+
+Noise jitter: apply only when not plateau and not channel, h>0: hash per cell → ±0.5 clamped [0.5, 3.5]. Also skip jitter for cells adjacent to channel (|x|<1.6) to keep steps clean.
+
+Hill box colors: top grass, sides stone, bottom stoneDark. For h=0.5 shoreline boxes maybe sides stone ✓.
+
+Also underwater foundation: add a big stone base box under island? Water at 0.02, island boxes from y=0 — no gap ✓.
+
+Pagoda platform: stone box 5×0.5×5 at y 3.5..4.0 ✓ (plateau 3.5).
+
+Also add stone lantern? no.
+
+Finial gold ✓.
+
+Roof corner blocks: at each tier, 4 blocks at corners lifted: tier1: slab2 3.3 wide → corners at ±(1.65-0.27)=±1.38? Place blocks centered ±1.45, size 0.55, y from slab1 top 5.82 to 6.35 (h 0.53). They sit on slab1 (overhang region beyond slab2 edge 1.65? slab2 half-width 1.65; block at 1.45+0.275=1.725 > 1.65 → overhangs slab2 corner, sits on slab1 (half 1.9) ✓ lifted above slab2 top (6.02) → block top 6.35 > 6.02 ✓ classic lifted corners.
+
+Tier2: slab1 2.9 (±1.45), slab2 2.5 (±1.25); corners ±1.18, size 0.5, y 7.52..7.95.
+Tier3: slab1 2.1 (±1.05), slab2 1.8 (±0.9); corners ±0.85, size 0.45, y 8.98..9.34.
+
+Bodies: tier1 2.6 wide (±1.3) under slab1 ±1.9 → overhang 0.6 ✓.
+
+Also add small dark "ceiling" box under each roof between body top and slab? Body top at 5.6 = slab1 bottom 5.6 — flush ✓ no gap.
+
+Eave hanger lanterns under tier1 slab1: at (±1.6, 5.5, 0), (0, 5.5, ±1.6): lantern box 0.22×0.26×0.22 center y 5.5 → top 5.63 pokes into slab1 bottom 5.6 slightly — set center 5.47 → top 5.6 ✓ flush. String box 0.06×0.1×0.06 at y 5.6..5.7? inside slab — skip string, lantern flush under eave reads fine. Actually hang slightly below: center 5.42, top 5.55, gap 0.05 under slab — add string 0.05 tall center 5.575. OK include string boxes (woodDark).
+
+Lantern box colors: all faces lanternCore-ish: t #ffe2b0, s #ffd9a0, b #e8a86a — but emissive geometry uses single material color (no vertex colors) → single color for all faces. Use plain color #ffd9a0 scaled by lantern level. Merge lantern boxes into one geometry (positions only, no colors) + MeshBasicMaterial. ✓
+
+Posts: woodDark boxes in static geometry.
+
+Glow plane positions: lantern center + y 0.1.
+
+Lantern list built during step loop + platform + eave: array of {x,y,z,scale}.
+
+Now petals respawn zones: trees array with canopy center (cx, cy, cz) and radius 2.2.
+
+Petal initial: random tree, random pos in disc, y between ground+0.5 and ground+3.5.
+
+Update: fall speed 0.35+rand*0.3 (per petal stored), sway: x += (windX + sin(t*1.3+phase)*0.35)*dt; z += (windZ + cos(t*1.1+phase)*0.25)*dt; rot += rotSpd*dt. ground = hillHeight(x,z)+0.04; if y<ground → respawn.
+
+Wind: (0.4, 0.12).
+
+Petal scale 0.8+rand*0.6 stored.
+
+Rotation Euler(rot, rot*0.6+phase, phase*0.5)? Just euler.set(rot, phase, rot*0.5).
+
+OK. Instanced petals material: MeshBasicMaterial({color: bloom, side:DoubleSide, fog:true}) — fog on petals fine (they're near center). Color updated per frame: petalMat.color.copy(BLOOM_COLOR).multiply(cur.tint)? Color.multiply exists ✓. Day: bloom×white ✓; night dim ✓; sunset warm ✓.
+
+Hmm — but tint also multiplies static scene; consistent relight ✓.
+
+Glow opacity: cur.glowA. Also glow color fixed warm — at day subtle, night strong ✓.
+
+Stars opacity cur.stars.
+
+Sun sprite: color cur.sun, scale cur.sunScale, glow sprite opacity cur.glowSun, color cur.sun.
+
+Fog color cur.fog; scene.background cur.sky; water uDeep cur.deep, uSky cur.water, uSun cur.sun, uFog cur.fog.
+
+staticMat.color = cur.tint.
+
+lanternMat.color = LANTERN × cur.lantern (clamp min 0.18).
+
+Transition speed: k = 1-exp(-dt*2.0) → ~1.5s to 95%. "Swing together" ✓.
+
+Buttons also trigger a tiny CSS pulse? skip.
+
+Reduced motion: also freeze mode transition? Keep transition (user-initiated, brief). Fine.
+
+Now write HTML/CSS/JS fully. Also meta viewport. Title. 
+
+CSS details:
+
+```css
+:root{ --ink:#14100a; --paper:#f6efe2; --accent:#f2a65a; }
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0e1830;}
+canvas#scene{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;}
+#ui{position:fixed;inset:0;pointer-events:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;}
+#title{position:absolute;top:16px;left:18px;color:#f6efe2;font-size:15px;letter-spacing:3px;font-weight:700;text-shadow:0 2px 0 rgba(10,8,6,.55), 0 0 12px rgba(10,8,6,.35);}
+#title small{display:block;font-size:10px;letter-spacing:2px;opacity:.85;font-weight:400;margin-top:4px;}
+#panel{position:absolute;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:10px;pointer-events:auto;}
+#panel button{min-width:76px;min-height:52px;padding:0 14px;font:inherit;font-size:13px;letter-spacing:2px;text-transform:uppercase;color:#f6efe2;background:rgba(12,10,8,.66);border:2px solid rgba(246,239,226,.4);border-radius:8px;cursor:pointer;backdrop-filter:blur(2px);}
+#panel button:hover{border-color:#f6efe2;}
+#panel button.active{background:var(--accent);color:var(--ink);border-color:#ffd9a0;font-weight:700;}
+#panel button:focus-visible{outline:3px solid #fff;outline-offset:2px;}
+#hint{position:absolute;left:50%;bottom:calc(86px + env(safe-area-inset-bottom));transform:translateX(-50%);color:#f6efe2;font-size:10px;letter-spacing:2px;opacity:.75;text-shadow:0 1px 0 rgba(10,8,6,.5);white-space:nowrap;}
+@media (max-width:560px){ #title{font-size:13px} #hint{display:none} }
+```
+
+Hint hidden on small screens to reduce clutter; or keep. Keep visible maybe; hide on very small.
+
+JS: wrap in try? No — clean console. Ensure import map exactly as specified.
+
+Potential pitfall: `renderer.setSize(w,h,false)` with CSS 100% — canvas attribute size = w*dpr × h*dpr; CSS stretches to w×h CSS px — 1:1 with device px when dpr matches ✓.
+
+Blit quad: PlaneGeometry(2,2) with ortho cam -1..1 → covers ✓. material.map = target.texture; toneMapped irrelevant (NoToneMapping). Also blit material fog:false default ✓. depthTest false? Quad at z=0 with ortho near 0 far 1 — fine with depthTest true; set depthTest:false, depthWrite:false to be safe.
+
+Also blitScene.background = null → renderer clears with clearColor black then quad covers all — but quad covers exactly full screen ✓ (ortho -1..1, plane 2×2 centered). Edge pixels: plane edges exactly at ±1 → covers ✓.
+
+Auto-clear: renderer.autoClear = true default; between passes it clears target then canvas ✓.
+
+One more consideration: inner target depth — WebGLRenderTarget default depthBuffer true ✓.
+
+Camera near 0.1 far 200 ✓.
+
+Orbit: 
+
+```js
+let theta = 0.7, phi = 0.62, dist = 27;
+function updateCamera(){
+  const sp = Math.sin(phi), y = Math.cos(phi);
+  camera.position.set(TARGET.x + dist*sp*Math.sin(theta), TARGET.y + dist*y, TARGET.z + dist*sp*Math.cos(theta));
+  camera.lookAt(TARGET);
+}
+```
+
+phi clamp [0.18, 1.42] (don't go under water: phi max → y = cos(1.42)=0.15 → cam y = 4.6+27*0.15=8.6 above water ✓; at dist 42 phi 1.42 → y=4.6+6.3=10.9 ✓).
+
+dist clamp [10, 44].
+
+Pointer move: theta -= dx*0.005 (drag right → orbit left? convention: dragging right rotates scene right → theta += dx*0.005? Either fine; choose theta += dx*0.005, phi += dy*0.005 clamp.
+
+Pinch: on two pointers: store prevDist; ratio = prevDist/curDist; dist *= ratio; clamp.
+
+Wheel: dist *= Math.exp(e.deltaY*0.0012); clamp. passive:true.
+
+interacted = true on pointerdown/wheel.
+
+Also prevent double-tap zoom on iOS: touch-action:none ✓.
+
+Buttons: pointerdown on button → also mark interacted? Buttons don't orbit; no need. But canvas is under panel — pointerdown on button targets button, not canvas ✓.
+
+Now petal instanced mesh frustumCulled=false; glow instanced frustumCulled=false; stars points frustumCulled=false (spread dome — bounding sphere computed automatically would cover; fine either way, set false).
+
+Static merged mesh frustumCulled: compute bounding sphere automatically ✓ (three computes on first render? For merged BufferGeometry, boundingSphere computed lazily ✓).
+
+Water plane frustumCulled default fine.
+
+Let me now also double-check `THREE.Color` multiply for tint: staticMat.color.copy(cur.tint) — vertexColors multiply ✓.
+
+Night tint 0x6a7fae: rgb(0.416,0.498,0.682) — floors ambient ✓.
+
+Day tint white ✓. Sunset tint 0xffd2a0 warm ✓.
+
+Lantern night: color = #ffd9a0 × 1.0 → bright ✓. Day ×0.25 → #4a3625-ish dim paper — hmm day lanterns should look like unlit paper (pale): ×0.25 makes dark brown — better day lantern color: pale paper #f6e8d0 × 0.9? Use level mapping: color = lerp(paperColor, glowColor, level)? Simplest: lanternMat.color.copy(LANTERN).multiplyScalar(0.25 + 0.75*cur.lantern) with day lantern=0.15 → 0.36× → #594029 dark... Paper lanterns in day are white-ish: use two-color lerp: lanternMat.color.copy(PAPER).lerp(GLOW, cur.lantern) where PAPER=#f2e4c8, GLOW=#ffd9a0... lerp between similar colors won't brighten much. Better: color = GLOW × (0.35 + 0.65*level): day 0.35 → #594a2e still darkish. Hmm. Day lanterns: make them look lit-but-dim: level day 0.45 → 0.45×#ffd9a0 = #725728 — dark amber, reads as small lantern ✓ fine honestly (tiny boxes). Or day level 0.6. Set day lantern 0.55, sunset 0.8, night 1.15 (clamp color ≤1? multiplyScalar can exceed 1 → HDR-ish bright, fine with no tonemapping → clamps at display). Night 1.15 → pops ✓.
+
+Glow opacity: day 0.10, sunset 0.5, night 0.9.
+
+Stars: day 0, sunset 0.25 (a few early stars at dusk ✓), night 1.
+
+Sun elevation: day 50, sunset 13, night 34 (moon). Sun scale: day 3.4, sunset 4.2 (big low sun), night 2.2 (moon). GlowSun opacity: day 0.35, sunset 0.75, night 0.22.
+
+Sky colors: day 0x8fd0e8; sunset 0xf2a35e (warm orange); night 0x0e1830. Fog: day 0xaadcee, sunset 0xeab183, night 0x1a2a48. Water deep: day 0x2e6f8e, sunset 0x7a4a3a, night 0x12233c. Water sky-refl: day 0x7fc8de, sunset 0xf2b06a, night 0x2a4a6e. Sun color: day 0xfff2c8, sunset 0xffc46a, night 0xdfe8ff.
+
+Tint: day 0xffffff, sunset 0xffd9ae, night 0x6a7fae.
+
+Good.
+
+Now, code size ~450 lines. Write carefully, check syntax mentally.
+
+Also: `matchMedia('(prefers-reduced-motion: reduce)')` — also listen for changes? Just read once.
+
+Petals when RM: set matrices once at init (updatePetals(0) once? need initial placement: respawn all + compose once). Do initial compose loop at init regardless.
+
+Glow flicker RM: constant scale.
+
+Stars RM: uBlink=0 → all visible (vA=1) × uOpacity.
+
+Water RM: uTime frozen 0 → static bands ✓ (still glassy via fresnel).
+
+Drift RM: off.
+
+Let me write the final code.
+
+```js
+import * as THREE from 'three';
+
+// ---------- palette ----------
+const PAL = {
+  roof:  [0xd64533, 0xb03a2c, 0x8e2a20],
+  wood:  [0x8a5f38, 0x6b4a2f, 0x4a3220],
+  stone: [0xa8adb5, 0x8a8f96, 0x5f646b],
+  grass: [0x86b45e, 0x6a9a4a, 0x4f7a3a],
+  bloom: [0xffd0dc, 0xf6b8c8, 0xe08ba0],
+  gold:  [0xf2d06a, 0xd9a848, 0xa87a30],
+};
+const PAPER = new THREE.Color(0xf2e4c8);
+const GLOWCORE = new THREE.Color(0xffd9a0);
+const BLOOM = new THREE.Color(0xf6b8c8);
+const LANTERN = new THREE.Color(0xffd9a0);
+```
+
+Modes as above.
+
+Voxel builder with Color objects per palette triple:
+
+```js
+const vb = { pos: [], col: [], idx: [], n: 0 };
+const tmpC = new THREE.Color();
+function voxBox(minX, minY, minZ, w, h, d, triple) {
+  // triple: [top, side, bottom] hexes — precompute Colors? convert each call — allocations at build time OK (not hot loop)
+}
+```
+
+Build-time allocation fine (not per-frame). Use tmpC.setHex(triple[f]) — setHex converts sRGB→linear (ColorManagement) ✓ push r,g,b.
+
+Faces table as above.
+
+Geometry:
+
+```js
+function buildGeometry(vb) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(vb.pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(vb.col, 3));
+  g.setIndex(vb.idx);
+  return g;
+}
+```
+
+Index array > 65535 verts? verts ~78k → need Uint32 indices: setIndex(array) auto-selects Uint32Array if needed ✓ (three checks max index). Yes, BufferGeometry.setIndex with plain array creates Uint32 when needed (it uses `arrayNeedsUint32`). ✓
+
+Hill build:
+
+```js
+const CELL = 0.5, GRID = 64, HALF = (GRID * CELL) / 2; // 16
+function smoothstep(a, b, x) { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+function hash2(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
+function stairTop(z) { const tz = Math.min(1, Math.max(0, (z - 2.5) / 12.5)); return (1 - tz) * 3.9 + 0.1; }
+function hillHeight(x, z) {
+  const r = Math.hypot(x, z);
+  let h;
+  if (r < 4.3) h = 3.5;
+  else if (r >= 19) h = 0;
+  else h = Math.round((1 - smoothstep(8, 19, r)) * 7) * 0.5;
+  // steps channel
+  if (Math.abs(x) < 1.0 && z > 2.5 && z < 15.0) {
+    h = Math.min(h, Math.max(0, Math.floor((stairTop(z) - 0.18) * 2) / 2));
+  } else if (h > 0 && h < 3.5 && r >= 4.3) {
+    const n = hash2(Math.floor((x + 16) / CELL), Math.floor((z + 16) / CELL));
+    if (n > 0.78 && h < 3.0) h += 0.5;
+    else if (n < 0.18 && h > 0.5) h -= 0.5;
+  }
+  return h;
+}
+```
+
+Wait: plateau r<4.3 then channel carve applies (z 2.5..4.3 within plateau) ✓ handled since channel check after.
+
+Hill boxes:
+
+```js
+for (let i = 0; i < GRID; i++) for (let j = 0; j < GRID; j++) {
+  const x = -HALF + (i + 0.5) * CELL, z = -HALF + (j + 0.5) * CELL;
+  const h = hillHeight(x, z);
+  if (h > 0) voxBox(x - CELL/2, 0, z - CELL/2, CELL, h, CELL, PAL.grass... 
+}
+```
+
+Wait — top grass only for top face; sides stone. But tall boxes: side faces span full height — stone ✓. Top grass ✓. Bottom stoneDark (underwater, invisible mostly) ✓.
+
+Hmm — grass on ALL tops including shoreline h=0.5 ✓ nice.
+
+But steps channel cells: carved cells get grass tops beside steps ✓.
+
+Also cells under platform (r<4.3 plateau) grass — platform covers center 5×5 ✓.
+
+Steps boxes:
+
+```js
+for (let z = 2.6; z < 15.0; z += 0.55) {
+  const top = stairTop(z);
+  voxBox(-0.85, 0, z - 0.28, 1.7, top, 0.56, PAL.stone);
+}
+```
+
+Step boxes from y=0 to top — tall boxes at start (4.0) — sides stone ✓. Overlap channel banks — embedded ✓. Step depth 0.56 with 0.55 pitch → slight overlap ✓ no gaps.
+
+Lantern posts along steps:
+
+```js
+const lanterns = [];
+let side = 1;
+for (let z = 3.6; z < 14.5; z += 2.1) {
+  side = -side;
+  const x = side * 1.02, top = stairTop(z) - 0.06;
+  voxBox(x - 0.07, top, z - 0.07, 0.14, 0.62, 0.14, PAL.wood); // post
+  lanterns.push({ x, y: top + 0.62 + 0.13, z, s: 1.35 });
+}
+```
+
+Lantern box added to emissive vb: emissiveBox(x,y,z, 0.22,0.26,0.22) — separate builder without colors:
+
+```js
+const eb = { pos: [], idx: [], n: 0 };
+function emitBox(minX,minY,minZ,w,h,d){ same faces, no colors }
+```
+
+Platform flank lanterns: (±1.35, 3.5+0.62+0.13, 2.9)? On plateau beside platform: base y=3.5, post 0.62 → lantern y = 3.5+0.62+0.13 = 4.25. x=±1.35, z=2.9 — beside platform front corners ✓.
+
+Eave lanterns: (±1.6, 5.42, 0), (0, 5.42, ±1.6) with string boxes (static wood): voxBox(x-0.03, 5.55, z-0.03, 0.06, 0.1, 0.06, PAL.wood) — string from slab bottom 5.6 down to 5.55.. lantern center 5.42 top 5.55 ✓.
+
+Wait slab1 bottom = 5.6 (slab1 y 5.6..5.82). String 5.55..5.65? center 5.6 h 0.1 → 5.55..5.65 pokes into slab slightly — fine (hidden). Lantern top 5.55 ✓.
+
+Glow positions = lantern centers, scale s (step 1.35, platform 1.3, eave 1.0).
+
+Pagoda build function with the stack computed above. Let me finalize numbers:
+
+```js
+// platform
+voxBox(-2.5, 3.5, -2.5, 5, 0.5, 5, PAL.stone);
+// tier bodies + roofs
+function tier(yBase, bodyW, bodyH, slab1W, slab2W, cornerOff, cornerS, roofH1, roofH2, cornerH) {
+  voxBox(-bodyW/2, yBase, -bodyW/2, bodyW, bodyH, bodyW, PAL.wood);
+  const y1 = yBase + bodyH;
+  voxBox(-slab1W/2, y1, -slab1W/2, slab1W, roofH1, slab1W, PAL.roof);
+  const y2 = y1 + roofH1;
+  voxBox(-slab2W/2, y2, -slab2W/2, slab2W, roofH2, slab2W, PAL.roof);
+  const y3 = y2 + roofH2;
+  for (const sx of [-1,1]) for (const sz of [-1,1]) {
+    voxBox(sx*cornerOff - cornerS/2, y2, sz*cornerOff - cornerS/2, cornerS, cornerH, cornerS, PAL.roof);
+  }
+  return y3;
+}
+```
+
+Corner blocks from y2 (slab1 top) up cornerH — lifted above slab2 top (y2+roofH2) if cornerH > roofH2 ✓.
+
+Tier1: yBase 4.0, bodyW 2.6, bodyH 1.6 → y1 5.6; slab1W 3.8 h 0.22 → y2 5.82; slab2W 3.3 h 0.2 → y3 6.02; cornerOff 1.45, cornerS 0.55, cornerH 0.55 → corner top 5.82+0.55=6.37 > 6.02 ✓ lifted 0.35.
+
+Tier2: yBase 6.02, bodyW 1.9, bodyH 1.3 → y1 7.32; slab1 2.9 h 0.2 → 7.52; slab2 2.5 h 0.18 → 7.70; corners off 1.18 s 0.5 h 0.45 → top 7.97 > 7.70 ✓.
+
+Tier3: yBase 7.70, bodyW 1.3, bodyH 1.1 → 8.80; slab1 2.1 h 0.18 → 8.98; slab2 1.8 h 0.16 → 9.14; corners off 0.85 s 0.45 h 0.4 → top 9.38 ✓.
+
+Finial: voxBox(-0.17, 9.14, -0.17, 0.34, 0.3, 0.34, PAL.gold); voxBox(-0.11, 9.44, -0.11, 0.22, 0.28, 0.22, PAL.gold); voxBox(-0.07, 9.72, -0.07, 0.14, 0.2, 0.14, PAL.gold); voxBox(-0.04, 9.92, -0.04, 0.08, 0.16, 0.08, PAL.gold); → top 10.08.
+
+Trees:
+
+```js
+const trees = [];
+function addTree(x, z) {
+  const g = hillHeight(x, z);
+  // trunk: jittered stack
+  let cx = x, cy = g;
+  const trunkH = 2.3;
+  for (let s = 0; s < 5; s++) {
+    const w = 0.36 - s * 0.035;
+    const h = trunkH / 5;
+    cx += (hash2(x * 3 + s, z * 7) - 0.5) * 0.14;
+    const cz = z + (hash2(z * 5 + s, x * 9) - 0.5) * 0.14;
+    voxBox(cx - w/2, cy, cz - w/2, w, h + 0.02, w, PAL.wood);
+    cy += h;
+  }
+  const topY = cy, topX = cx, topZ = cz... 
+```
+
+Hmm cz overwritten per segment; keep last. Canopy center: (topX, topY + 0.75, topZ). Blob:
+
+```js
+  const cc = { x: topX, y: topY + 0.8, z: topZ };
+  for (let b = 0; b < 22; b++) {
+    const a = hash2(b * 1.7, x) * Math.PI * 2;
+    const rr = 0.35 + hash2(b * 3.1, z) * 0.95;
+    const yy = (hash2(b * 5.3, x * 2) - 0.5) * 1.5;
+    const s = 0.45 + hash2(b * 7.7, z * 3) * 0.5;
+    const bx = cc.x + Math.cos(a) * rr;
+    const bz = cc.z + Math.sin(a) * rr;
+    const by = cc.y + yy * 0.7;
+    const triple = hash2(b * 9.1, x + z) > 0.5 ? PAL.bloom : [PAL.bloom[0], PAL.bloom[1], PAL.bloom[2]]... 
+```
+
+Hmm bloom triple variants: use PAL.bloom for most, darker variant for some: define PAL.bloomD = [0xf2a0b4, 0xe08ba0, 0xc96a82]? That adds palette colors. Simpler: alternate between PAL.bloom and a darker triple bloomShadow = [0xf6b8c8, 0xe08ba0, 0xc97a90]. OK add.
+
+Also top cap: voxBox(cc.x-0.55, cc.y+0.55, cc.z-0.55, 1.1, 0.5, 1.1, PAL.bloom).
+
+trees.push(cc) for petals.
+
+Tree positions: (-6.5,-3.5), (6.2,-4.8), (-8.5,5.5), (8.8,4.2). Check r<19 ✓ all.
+
+Bushes:
+
+```js
+function addBush(x, z, s) {
+  const g = hillHeight(x, z);
+  for (let b = 0; b < 7; b++) {
+    const a = hash2(b*2.3, x)*Math.PI*2, rr = hash2(b*4.7,z)*s;
+    const size = 0.3 + hash2(b*6.1, x+z)*0.35;
+    voxBox(x+Math.cos(a)*rr - size/2, g + hash2(b*8.9,z)*0.3, z+Math.sin(a)*rr - size/2, size, size*0.9, size, hash2(b,x)>0.4?PAL.bloom:PAL.bloomD);
+  }
+}
+addBush(2.4, 5.2, 0.7); addBush(-2.5, 5.6, 0.6); addBush(3.6, 14.2, 0.8); addBush(-3.8, 13.8, 0.7);
+```
+
+Bush at (3.6,14.2): r=14.6 → h≈? smoothstep(8,19,14.6): x=0.6, s=0.36*1.8=0.648 → t=0.352 → round(2.46)=2 → h=1.0 ✓ near shore.
+
+Petals:
+
+```js
+const PETAL_N = 130;
+const petalGeo = new THREE.PlaneGeometry(0.24, 0.24);
+const petalMat = new THREE.MeshBasicMaterial({ color: BLOOM.clone(), side: THREE.DoubleSide });
+const petals = new THREE.InstancedMesh(petalGeo, petalMat, PETAL_N);
+petals.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+petals.frustumCulled = false;
+// data
+const pData = []; // {x,y,z,fall,sway,rot,rotSpd,sc,tree}
+function respawnPetal(p, initial) {
+  const t = trees[(Math.random()*trees.length)|0];
+  const a = Math.random()*Math.PI*2, rr = Math.random()*2.4;
+  p.x = t.x + Math.cos(a)*rr; p.z = t.z + Math.sin(a)*rr;
+  const g = hillHeight(p.x, p.z);
+  p.y = initial ? g + Math.random()*3.2 : g + 2.6 + Math.random()*1.6;
+}
+```
+
+Update loop with preallocated temps.
+
+Glow instanced:
+
+```js
+const glowGeo = new THREE.PlaneGeometry(1, 1);
+const glowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+const glows = new THREE.InstancedMesh(glowGeo, glowMat, lanterns.length);
+```
+
+Per frame: for each lantern i: flick = RM ? 1 : 1 + 0.16*Math.sin(t*6.5 + i*1.7); sc = lanterns[i].s * flick; billboard: m4.lookAt(lPos, camera.position, up) — Matrix4.lookAt(eye,target,up) constructs rotation with eye at position looking at target. We want plane oriented facing camera: eye = lantern pos, target = camera pos ✓. Then quat.setFromRotationMatrix(m4); compose(lPos, quat, scaleVec). setMatrixAt.
+
+Preallocate: glowM4, glowQ, glowV(pos), glowS(scale), upVec (0,1,0).
+
+Note Matrix4.lookAt makes -z face target? Object3D.lookAt orients +z? For planes, PlaneGeometry faces +z. Matrix4.lookAt(eye, target, up) creates a rotation where the object's +z axis points from target toward eye?? Three's Matrix4.lookAt: "Constructs a rotation matrix, looking from eye towards target oriented by up" — the resulting matrix's z axis = normalize(eye - target) (i.e., +z points from target to eye, so -z faces target). Camera convention. So plane's +z (its front) points toward eye-from-target = away from camera → plane's back faces camera. With DoubleSide glow material it doesn't matter visually (texture symmetric). Set glowMat.side = DoubleSide ✓. Or use lookAt(camera.position, lPos, up) → z axis = normalize(camPos - lPos) → +z toward camera ✓ front faces camera. Use that: m4.lookAt(camera.position, lPos, up). ✓
+
+Stars:
+
+```js
+const starN = 170;
+positions Float32Array, aSize, aPhase.
+const starGeo = new THREE.BufferGeometry();
+starGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+starGeo.setAttribute('aSize', new THREE.BufferAttribute(sizeArr, 1));
+starGeo.setAttribute('aPhase', new THREE.BufferAttribute(phaseArr, 1));
+```
+
+ShaderMaterial as planned. Points frustumCulled false.
+
+Sun sprites:
+
+```js
+const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xfff2c8, fog: false }));
+const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xfff2c8, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+scene.add(sunSprite, sunGlow);
+```
+
+Update: position from cur.sunEl & SUN_AZ; scale.
+
+Water mesh:
+
+```js
+const waterGeo = new THREE.PlaneGeometry(140, 140);
+waterGeo.rotateX(-Math.PI/2);
+const water = new THREE.Mesh(waterGeo, waterMat);
+water.position.y = 0.02;
+```
+
+uFog uniform added.
+
+Static mesh:
+
+```js
+const staticMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xffffff });
+const staticMesh = new THREE.Mesh(buildGeometry(vb), staticMat);
+```
+
+Lantern emissive mesh:
+
+```js
+const lanternMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
+const lanternMesh = new THREE.Mesh(buildGeometryNoColor(eb), lanternMat);
+```
+
+Scene add all. Fog: scene.fog = new THREE.Fog(0xeab183, 30, 88).
+
+Camera: PerspectiveCamera(45, aspect, 0.1, 220).
+
+Renderer: antialias false.
+
+Target: WebGLRenderTarget(1,1,{...}) then resize sets size.
+
+Blit.
+
+Loop with THREE.Clock.
+
+Resize listener + initial.
+
+Buttons wiring.
+
+Also initial camera update before first render.
+
+Edge: `renderer.setPixelRatio` before `setSize`. On resize re-set both.
+
+Also handle visibility: clock delta clamp.
+
+Let me also confirm InstancedMesh with MeshBasicMaterial + map + additive: fine.
+
+Petal material fog: true default — petals near center, negligible.
+
+One more check — vertexColors with MeshBasicMaterial and material.color tint: shader does `diffuseColor *= vColor` ✓.
+
+Night: tint 0x6a7fae — but wait, this also tints the stone steps etc. ✓ intended.
+
+Water manual fog: mix(col, uFog, smoothstep(28.0, 80.0, dist)) — smoothstep in shader fine (it's within shader, not upscale path).
+
+Also water alpha 1 opaque ✓. Water renders after static? Opaque objects sorted front-to-back; water plane huge — depth test handles ✓. Water at y=0.02 vs island boxes — boxes in front render correctly via depth ✓.
+
+Render order: glows additive transparent → rendered after opaque ✓. Stars transparent ✓. Sprites transparent ✓.
+
+Petals transparent? Opaque (no transparency) — fine, chunky.
+
+Now the blit: 
+
+```js
+const rt = new THREE.WebGLRenderTarget(2, 2, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, depthBuffer: true, stencilBuffer: false });
+```
+
+Hmm WebGLRenderTarget options: {minFilter, magFilter, ...} ✓.
+
+Blit material: `new THREE.MeshBasicMaterial({ map: rt.texture })` — map nearest ✓. Also `toneMapped: false` irrelevant.
+
+Potential issue: rendering scene with background Color into RT then sampling — sRGB conversion happens only at final output ✓ colors consistent.
+
+Let me also add `renderer.outputColorSpace = THREE.SRGBColorSpace;` (default in r170 anyway).
+
+Now UI wiring:
+
+```js
+const btns = document.querySelectorAll('#panel button');
+btns.forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+function setMode(m) { tgtMode = MODES[m]; btns.forEach(b => b.classList.toggle('active', b.dataset.mode === m)); }
+```
+
+Initial: setMode('sunset') with cur = clone of sunset.
+
+cur structure: { sky: Color, fog: Color, tint: Color, deep: Color, water: Color, sun: Color, lantern: n, glowA: n, stars: n, sunEl: n, sunScale: n, glowSun: n }.
+
+cloneMode(m): returns object with new Colors.
+
+lerpParams(cur, tgt, k): colors lerp, numbers += (t-c)*k.
+
+applyParams(): as listed.
+
+Sun position: 
+
+```js
+const SUN_AZ = 2.55;
+function sunPos(elDeg, out) {
+  const el = elDeg * Math.PI/180;
+  const ce = Math.cos(el);
+  out.set(70*ce*Math.sin(SUN_AZ), 70*Math.sin(el), 70*ce*Math.cos(SUN_AZ));
+}
+```
+
+sunSprite.position.copy(tmpV); scale.set(cur.sunScale, cur.sunScale, 1). sunGlow same pos, scale ×3.2, opacity cur.glowSun, color cur.sun.
+
+sunSprite.material.color.copy(cur.sun) ✓.
+
+Stars opacity: starMat.uniforms.uOpacity.value = cur.stars.
+
+Water uniforms: uDeep.copy(cur.deep), uSky.copy(cur.water), uSun.copy(cur.sun), uFog.copy(cur.fog).
+
+petalMat.color.copy(BLOOM).multiply(cur.tint) — Color.multiply(tint) ✓.
+
+lanternMat.color.copy(LANTERN).multiplyScalar(Math.min(1.2, 0.3 + 0.9*cur.lantern))? Map level: day 0.55 → 0.3+0.495=0.795?? too bright for day. Direct: lanternMat.color.copy(LANTERN).multiplyScalar(cur.lantern) with day lantern 0.5 → 0.5× amber ✓, sunset 0.85, night 1.15. Set MODES lantern: day 0.5, sunset 0.85, night 1.15.
+
+glowMat.opacity = cur.glowA (day 0.12, sunset 0.5, night 0.9).
+
+staticMat.color.copy(cur.tint).
+
+scene.background — assign cur.sky object once: scene.background = cur.sky (mutated in place) ✓. fog.color — scene.fog.color is own Color; copy cur.fog into it each frame ✓.
+
+OK. Also hint: maybe show current mode name in title? skip.
+
+Petal update details:
+
+```js
+function updatePetals(dt, t) {
+  for (let i = 0; i < PETAL_N; i++) {
+    const p = pData[i];
+    p.y -= p.fall * dt;
+    p.x += (0.42 + Math.sin(t * 1.4 + p.sway) * 0.3) * dt;
+    p.z += (0.12 + Math.cos(t * 1.1 + p.sway) * 0.22) * dt;
+    p.rot += p.rotSpd * dt;
+    const g = hillHeight(p.x, p.z) + 0.05;
+    if (p.y < g || p.x > 20 || p.z > 20) respawnPetal(p, false);
+    tmpV.set(p.x, p.y, p.z);
+    tmpE.set(p.rot, p.sway + t * 0.2, p.rot * 0.6);
+    tmpQ.setFromEuler(tmpE);
+    tmpS.setScalar(p.sc);
+    tmpM.compose(tmpV, tmpQ, tmpS);
+    petals.setMatrixAt(i, tmpM);
+  }
+  petals.instanceMatrix.needsUpdate = true;
+}
+```
+
+respawnPetal uses Math.random ✓ no allocation (pData objects preallocated).
+
+Initial petal placement: for each p: respawnPetal(p, true); then compose once (run updatePetals(0.016, 0) once) — or just call updatePetals(0,0) after init — with dt=0 positions unchanged but matrices composed ✓. But RM path never calls updatePetals → call once at init always ✓.
+
+Glow update:
+
+```js
+function updateGlows(t) {
+  for (let i = 0; i < lanterns.length; i++) {
+    const L = lanterns[i];
+    const f = RM ? 1 : 1 + 0.16 * Math.sin(t * 6.5 + i * 1.73);
+    tmpV.set(L.x, L.y + 0.12, L.z);
+    tmpM.lookAt(camera.position, tmpV, UP);
+    tmpQ.setFromRotationMatrix(tmpM);
+    tmpS.setScalar(L.s * f);
+    tmpM.compose(tmpV, tmpQ, tmpS);
+    glows.setMatrixAt(i, tmpM);
+  }
+  glows.instanceMatrix.needsUpdate = true;
+}
+```
+
+Call every frame (cheap, 12 instances) — even RM (constant f) ✓.
+
+Camera update + drift:
+
+```js
+if (!interacted && !RM) theta += dt * 0.05;
+```
+
+Camera pos from spherical with TARGET (0, 4.8, 0).
+
+Now assemble HTML. Also `<meta name="color-scheme" content="dark">`? minor.
+
+Double-check import map JSON formatting.
+
+Also: no other CDN content ✓. No fonts ✓ (system monospace). No textures external ✓ (canvas-generated glow).
+
+Console clean: ensure no warnings — e.g., WebGLRenderTarget resize fine; InstancedMesh fine.
+
+One risk: `THREE.CanvasTexture` with colorSpace SRGB — fine.
+
+Another: Points ShaderMaterial — need `transparent: true`. Also points size: gl_PointSize = aSize — but on some GPUs max point size limits (often ≥ 8) ✓ sizes 1-3 inner px.
+
+Wait — gl_PointSize in the inner render: inner buffer ~360px tall; point size 2-3 px ✓.
+
+Stars beyond fog: fog:false on ShaderMaterial? ShaderMaterial ignores fog unless fog:true + shader includes fog chunks — ours doesn't ✓ no fog applied.
+
+Sprites fog:false set ✓.
+
+Sun sprite at dist 70 within far 220 ✓.
+
+Also moon at night: same sprite, color pale, scale 2.2 ✓. Maybe make moon square with slightly darker corner? skip.
+
+Let me also think about the "still pond" — water plane covers everything beyond island; at foot of hill the channel ends at water → pond feel ✓. Maybe add a subtle stone rim at channel end? skip.
+
+Title text: "PIXEL PAGODA" / subtitle "voxel dusk · three moods".
+
+Hint: "drag to orbit — scroll or pinch to zoom".
+
+Now write it all out. Also remember: buttons thumb-sized ✓ 76×52.
+
+Also add `aria-label`s maybe. Keep simple.
+
+Let me write the final file mentally checking syntax:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pixel Pagoda — voxel dusk</title>
+<style> ... </style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="ui">
+  <div id="title">PIXEL PAGODA<small>voxel dusk · day / sunset / night</small></div>
+  <div id="hint">drag to orbit · scroll or pinch to zoom</div>
+  <div id="panel">
+    <button data-mode="day">Day</button>
+    <button data-mode="sunset" class="active">Sunset</button>
+    <button data-mode="night">Night</button>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+...
+</script>
+</body>
+</html>
+```
+
+JS full:
+
+```js
+// ============ palette (the whole scene is graded to these) ============
+const PAL = {
+  roof:   [0xd64533, 0xb03a2c, 0x8e2a20], // vermilion eaves: top / side / underside
+  wood:   [0x8a5f38, 0x6b4a2f, 0x4a3220],
+  stone:  [0xa8adb5, 0x8a8f96, 0x5f646b],
+  grass:  [0x86b45e, 0x6a9a4a, 0x4f7a3a],
+  bloom:  [0xffd0dc, 0xf6b8c8, 0xe08ba0],
+  bloomD: [0xf2a0b4, 0xe08ba0, 0xc97a90],
+  gold:   [0xf2d06a, 0xd9a848, 0xa87a30],
+};
+const LANTERN = new THREE.Color(0xffd9a0);
+const BLOOM   = new THREE.Color(0xf6b8c8);
+
+// ============ moods ============
+const MODES = {
+  day:    { sky:0x8fd0e8, fog:0xaadcee, tint:0xffffff, deep:0x2e6f8e, water:0x7fc8de, sun:0xfff2c8, lantern:0.50, glowA:0.12, stars:0.00, sunEl:50, sunScale:3.4, glowSun:0.35 },
+  sunset: { sky:0xf2a35e, fog:0xeab183, tint:0xffd9ae, deep:0x7a4a3a, water:0xf2b06a, sun:0xffc46a, lantern:0.85, glowA:0.50, stars:0.25, sunEl:13, sunScale:4.2, glowSun:0.75 },
+  night:  { sky:0x0e1830, fog:0x1a2a48, tint:0x6a7fae, deep:0x12233c, water:0x2a4a6e, sun:0xdfe8ff, lantern:1.15, glowA:0.90, stars:1.00, sunEl:34, sunScale:2.2, glowSun:0.22 },
+};
+```
+
+RM:
+
+```js
+const RM = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+```
+
+Renderer:
+
+```js
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+```
+
+Scene, camera, fog:
+
+```js
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 220);
+const TARGET = new THREE.Vector3(0, 4.8, 0);
+scene.fog = new THREE.Fog(0xeab183, 30, 88);
+```
+
+Voxel builder:
+
+```js
+const FACES = [ ... ];
+const vb = { pos: [], col: [], idx: [], n: 0 };
+const eb = { pos: [], idx: [], n: 0 };
+const tmpC = new THREE.Color();
+function pushBox(b, minX, minY, minZ, w, h, d, triple) {
+  for (let f = 0; f < 6; f++) {
+    const face = FACES[f];
+    if (triple) { tmpC.setHex(triple[f]); }
+    for (let c = 0; c < 4; c++) {
+      const cn = face.corners[c];
+      b.pos.push(minX + cn[0]*w, minY + cn[1]*h, minZ + cn[2]*d);
+      if (triple) b.col.push(tmpC.r, tmpC.g, tmpC.b);
+    }
+    const n = b.n;
+    b.idx.push(n, n+1, n+2, n+2, n+1, n+3);
+    b.n += 4;
+  }
+}
+function vox(x, y, z, w, h, d, triple) { pushBox(vb, x, y, z, w, h, d, triple); }
+function glowBox(x, y, z, w, h, d) { pushBox(eb, x, y, z, w, h, d, null); }
+```
+
+Note vox takes min corner coords.
+
+Hill + everything as planned.
+
+toGeometry:
+
+```js
+function toGeometry(b, withColor) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+  if (withColor) g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
+  g.setIndex(b.idx);
+  return g;
+}
+```
+
+Build scene objects...
+
+Water shader with uFog.
+
+Stars.
+
+Sun sprites.
+
+Petals.
+
+Glows.
+
+Lanterns list.
+
+RT + blit.
+
+Modes cur/tgt, setMode, lerp, apply.
+
+Input.
+
+Resize.
+
+Loop.
+
+Let me be careful about one thing: `scene.background = cur.sky` — cur.sky is a THREE.Color that we mutate via lerp — renderer reads it each frame ✓.
+
+Also initial: cur = cloneMode(MODES.sunset); tgtMode = MODES.sunset; applyParams() once before first frame ✓ (loop applies anyway).
+
+cloneMode:
+
+```js
+function cloneMode(m) {
+  return {
+    sky: new THREE.Color(m.sky), fog: new THREE.Color(m.fog), tint: new THREE.Color(m.tint),
+    deep: new THREE.Color(m.deep), water: new THREE.Color(m.water), sun: new THREE.Color(m.sun),
+    lantern: m.lantern, glowA: m.glowA, stars: m.stars, sunEl: m.sunEl, sunScale: m.sunScale, glowSun: m.glowSun,
+  };
+}
+```
+
+applyParams:
+
+```js
+function applyParams() {
+  scene.fog.color.copy(cur.fog);
+  staticMat.color.copy(cur.tint);
+  lanternMat.color.copy(LANTERN).multiplyScalar(cur.lantern);
+  glowMat.opacity = cur.glowA;
+  petalMat.color.copy(BLOOM).multiply(cur.tint);
+  starMat.uniforms.uOpacity.value = cur.stars;
+  waterMat.uniforms.uDeep.value.copy(cur.deep);
+  waterMat.uniforms.uSky.value.copy(cur.water);
+  waterMat.uniforms.uSun.value.copy(cur.sun);
+  waterMat.uniforms.uFog.value.copy(cur.fog);
+  sunSprite.material.color.copy(cur.sun);
+  sunGlow.material.color.copy(cur.sun);
+  sunGlow.material.opacity = cur.glowSun;
+  sunPos(cur.sunEl, tmpV);
+  sunSprite.position.copy(tmpV);
+  sunSprite.scale.set(cur.sunScale, cur.sunScale, 1);
+  sunGlow.position.copy(tmpV);
+  sunGlow.scale.set(cur.sunScale*3.4, cur.sunScale*3.4, 1);
+}
+```
+
+scene.background = cur.sky set once at init ✓.
+
+Loop:
+
+```js
+const clock = new THREE.Clock();
+function frame() {
+  requestAnimationFrame(frame);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+  const k = 1 - Math.exp(-dt * 2.4);
+  // swing mood
+  cur.sky.lerp(tgtMode.sky, k); ... colors; numbers:
+  cur.lantern += (tgtMode.lantern - cur.lantern) * k; etc.
+  applyParams();
+  if (!interacted && !RM) theta += dt * 0.05;
+  // camera
+  const sp = Math.sin(phi), cp = Math.cos(phi);
+  camera.position.set(TARGET.x + dist*sp*Math.sin(theta), TARGET.y + dist*cp, TARGET.z + dist*sp*Math.cos(theta));
+  camera.lookAt(TARGET);
+  // life
+  if (!RM) updatePetals(dt, t);
+  updateGlows(t);
+  waterMat.uniforms.uTime.value = RM ? 0 : t;
+  starMat.uniforms.uTime.value = RM ? 0 : t;
+  // two passes
+  renderer.setRenderTarget(rt);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  renderer.render(blitScene, blitCam);
+}
+```
+
+Color lerp: `cur.sky.lerp(tgtMode.sky, k)` — tgtMode.sky is a Color (MODES stores hex numbers! I defined MODES with hex numbers). So tgtMode must be cloneMode too: `let tgtMode = cloneMode(MODES.sunset);` and setMode(m) → tgtMode = cloneMode(MODES[m]) — allocation per click, fine (not hot loop).
+
+Resize:
+
+```js
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(w, h, false);
+  const scale = Math.max(w, h) > 1500 ? 4 : 3;
+  rt.setSize(Math.max(96, Math.round(w / scale)), Math.max(96, Math.round(h / scale)));
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+```
+
+Input:
+
+```js
+let theta = 0.7, phi = 0.62, dist = 27, interacted = false;
+const pointers = new Map();
+let pinchDist = 0;
+canvas.addEventListener('pointerdown', (e) => {
+  interacted = true;
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) {
+    const p = [...pointers.values()];
+    pinchDist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (pointers.size === 1) {
+    theta += dx * 0.005;
+    phi = Math.min(1.42, Math.max(0.18, phi + dy * 0.005));
+  } else if (pointers.size === 2) {
+    const q = [...pointers.values()];
+    const d = Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y);
+    if (pinchDist > 0) dist = Math.min(44, Math.max(10, dist * (pinchDist / d)));
+    pinchDist = d;
+  }
+});
+const endPointer = (e) => { pointers.delete(e.pointerId); pinchDist = 0; };
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('wheel', (e) => {
+  interacted = true;
+  dist = Math.min(44, Math.max(10, dist * Math.exp(e.deltaY * 0.0012)));
+}, { passive: true });
+```
+
+`[...pointers.values()]` allocates per move event — minor, not per-frame hot loop (only during drag). Acceptable; or track two pointers manually. Fine.
+
+Buttons:
+
+```js
+const btns = Array.from(document.querySelectorAll('#panel button'));
+function setMode(name) {
+  tgtMode = cloneMode(MODES[name]);
+  for (const b of btns) b.classList.toggle('active', b.dataset.mode === name);
+}
+for (const b of btns) b.addEventListener('click', () => setMode(b.dataset.mode));
+setMode('sunset');
+```
+
+Init order: cur = cloneMode(MODES.sunset) before setMode... setMode sets tgtMode; cur initialized separately: `let cur = cloneMode(MODES.sunset); let tgtMode = cloneMode(MODES.sunset);` then setMode('sunset') redundant but sets button class — buttons already have active class in HTML; call setMode anyway.
+
+Petals init: pData array of objects:
+
+```js
+const pData = [];
+for (let i = 0; i < PETAL_N; i++) {
+  pData.push({ x:0,y:0,z:0, fall:0.3+Math.random()*0.35, sway:Math.random()*Math.PI*2, rot:Math.random()*Math.PI*2, rotSpd:(Math.random()-0.5)*2.4, sc:0.8+Math.random()*0.7 });
+  respawnPetal(pData[i], true);
+}
+updatePetals(0, 0); // compose initial matrices
+```
+
+Wait updatePetals(0,0) with dt=0: p.y -= 0 ✓; matrices composed ✓. But RM flag: updatePetals called at init regardless ✓.
+
+respawnPetal:
+
+```js
+function respawnPetal(p, initial) {
+  const tr = trees[(Math.random() * trees.length) | 0];
+  const a = Math.random() * Math.PI * 2;
+  const rr = 0.4 + Math.random() * 2.3;
+  p.x = tr.x + Math.cos(a) * rr;
+  p.z = tr.z + Math.sin(a) * rr;
+  const g = hillHeight(p.x, p.z);
+  p.y = initial ? g + 0.3 + Math.random() * 3.0 : g + 2.4 + Math.random() * 1.8;
+}
+```
+
+Petals over water near trees? Trees at r≤10 → petals within 2.7 → r≤12.7 → hill h>0 mostly ✓.
+
+Glow texture function as planned.
+
+Stars build:
+
+```js
+const starPos = new Float32Array(starN * 3);
+const starSize = new Float32Array(starN);
+const starPhase = new Float32Array(starN);
+for (let i = 0; i < starN; i++) {
+  const az = Math.random() * Math.PI * 2;
+  const el = 0.12 + Math.random() * 1.25;
+  const r = 62 + Math.random() * 16;
+  starPos[i*3]   = r * Math.cos(el) * Math.sin(az);
+  starPos[i*3+1] = Math.max(6, r * Math.sin(el));
+  starPos[i*3+2] = r * Math.cos(el) * Math.cos(az);
+  starSize[i] = 1 + (Math.random() * 2.4 | 0);
+  starPhase[i] = Math.random();
+}
+```
+
+starSize integer-ish 1..3 ✓ chunky.
+
+Star shader material:
+
+```js
+const starMat = new THREE.ShaderMaterial({
+  uniforms: { uTime: { value: 0 }, uOpacity: { value: 0 }, uBlink: { value: RM ? 0 : 1 }, uColor: { value: new THREE.Color(0xcfe0ff) } },
+  vertexShader: `
+    attribute float aSize;
+    attribute float aPhase;
+    uniform float uTime;
+    uniform float uBlink;
+    varying float vA;
+    void main() {
+      float blink = step(0.35, fract(uTime * 0.22 + aPhase));
+      vA = mix(1.0, blink, uBlink);
+      gl_PointSize = aSize;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    uniform vec3 uColor;
+    uniform float uOpacity;
+    varying float vA;
+    void main() { gl_FragColor = vec4(uColor, vA * uOpacity); }`,
+  transparent: true,
+  depthWrite: false,
+});
+const stars = new THREE.Points(starGeo, starMat);
+stars.frustumCulled = false;
+```
+
+Water material:
+
+```js
+const waterMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uDeep: { value: new THREE.Color(0x7a4a3a) },
+    uSky:  { value: new THREE.Color(0xf2b06a) },
+    uSun:  { value: new THREE.Color(0xffc46a) },
+    uFog:  { value: new THREE.Color(0xeab183) },
+    uTime: { value: 0 },
+    uSmudge: { value: new THREE.Vector3(0, 0, 6.0) },
+  },
+  ...
+});
+```
+
+Smudge at (0, 6): front shore where steps meet water ✓ reflection hint of pagoda. Second smudge offset (0, 3.5)? d2 = distance(p, uSmudge.xz + vec2(0,-3)) → (0,3) — nearer island. OK.
+
+Water fragment also manual fog:
+
+```glsl
+float fd = distance(cameraPosition, vWorld);
+col = mix(col, uFog, smoothstep(26.0, 80.0, fd));
+```
+
+Then quantize after fog: col = floor(col*12)/12 at very end ✓.
+
+Blit:
+
+```js
+const rt = new THREE.WebGLRenderTarget(2, 2, {
+  minFilter: THREE.NearestFilter,
+  magFilter: THREE.NearestFilter,
+  generateMipmaps: false,
+  depthBuffer: true,
+  stencilBuffer: false,
+});
+const blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const blitScene = new THREE.Scene();
+const blitQuad = new THREE.Mesh(
+  new THREE.PlaneGeometry(2, 2),
+  new THREE.MeshBasicMaterial({ map: rt.texture, depthTest: false, depthWrite: false })
+);
+blitQuad.frustumCulled = false;
+blitScene.add(blitQuad);
+```
+
+Static mesh + lantern mesh + water + petals + glows + stars + sun sprites added to scene.
+
+Also: glowMat opacity initial 0.5 — applyParams sets ✓.
+
+Check glow instanced mesh: InstancedMesh with additive transparent material — renders in transparent pass sorted by object center — fine.
+
+One concern: InstancedMesh + MeshBasicMaterial with map — needs `glowMat.side = THREE.DoubleSide`? Billboarded via lookAt with front facing camera (we used lookAt(camera.position, tmpV, UP) → +z toward camera ✓ front face visible). Keep FrontSide default... wait Matrix4.lookAt(eye, target, up): z axis = normalize(eye - target). eye=camera.position, target=lanternPos → z axis points from lantern toward camera ✓ plane front (+z) faces camera ✓.
+
+UP = new THREE.Vector3(0,1,0).
+
+tmpM.lookAt — Matrix4.lookAt(eye, target, up) ✓.
+
+Now hill geometry count: cells with h>0: island area π*19²≈1134 /0.25 ≈ 4536 cells, minus water r≥19... all cells within grid 64×64=4096 total (grid covers 32×32, island r<19 → π*19²=1134 > grid area 1024?? Grid half=16 → covers r≤~22.6 corner. Cells with r<19: ~π*19²/0.25 = 4536 but grid only has 4096 cells — grid limits: x,z ∈ [-16,16] → max r at corner 22.6; cells with r<19 ≈ area π*19² ∩ grid ≈ most of grid ≈ 3900 cells, h>0 for r<19 → ~3700 boxes. ×24 verts = 89k verts. Plus rest ~1.5k boxes → ~104k verts total, 156k indices. Fine.
+
+Build time: ~5k hillHeight calls + pushes — fast (<50ms).
+
+Memory: positions Float32 104k×3×4 ≈ 1.25MB ✓.
+
+Draw calls: static(1), lanterns(1), water(1), petals(1), glows(1), stars(1), sunSprite(1), sunGlow(1) = 8 + blit(1) = 9 ✓.
+
+Everything checks. Now also "zero per-frame allocations in the hot loop" — verify loop: lerpParams uses in-place; applyParams in-place; updatePetals uses tmp objects; updateGlows tmp; camera set; no `[...pointers]` in frame loop (only in pointermove handler — event, not frame; acceptable but let me avoid anyway by storing two pointer entries manually? Simpler: keep as is — it's not the hot loop). requestAnimationFrame(frame) at top ✓.
+
+clock.elapsedTime — property updated by getDelta ✓.
+
+One more: `renderer.setRenderTarget(rt)` then render — rt.texture sampled in blit ✓.
+
+Also initial resize() before first frame ✓ and camera aspect set ✓.
+
+Potential Safari issue: WebGLRenderTarget with NearestFilter + no mipmaps ✓ standard.
+
+iOS pinch: pointer events with touch-action:none ✓ two pointers tracked ✓.
+
+Also add `e.preventDefault()` on pointerdown? Not needed with touch-action none.
+
+Wheel on trackpads sends deltaY small ✓.
+
+Now CSS: canvas display block; #ui pointer-events none; panel pointer-events auto.
+
+Also buttons: type="button".
+
+Title styling with pixel vibe: maybe use text-shadow blocky. Fine.
+
+Let me also consider: hint says "scroll or pinch" ✓.
+
+Edge case: `matchMedia` reduce — also freeze auto-drift ✓ done.
+
+Final check of FACES corners mapping to min corner: corners are 0/1 offsets: pos = min + offset*size ✓.
+
+Face color order: FACES order = [left(-x), right(+x), bottom(-y), top(+y), back(-z), front(+z)] → triple index: [side(1), side(1), bottom(2), top(0), side(1), side(1)] → triple[f] with triple = [top, side, bottom]: f0 left → triple[1] ✓; f2 bottom → triple[2] ✓; f3 top → triple[0] ✓. So in pushBox: `tmpC.setHex(triple[f === 3 ? 0 : f === 2 ? 2 : 1])`. ✓
+
+Write it.
+
+Also small detail: voxBox for hill uses triple PAL.grass (top grass, sides stone?) — wait I wanted hill tops grass and sides STONE. So hill boxes need mixed triple: top=grass[0], sides=stone[1], bottom=stone[2]. My vox() takes a single triple [t,s,b] — for hill pass custom triple: [PAL.grass[0], PAL.stone[1], PAL.stone[2]] ✓ define HILL_TRIPLE.
+
+Steps: stone triple ✓. Platform stone ✓. Bodies wood ✓. Roofs roof triple ✓ (top bright, sides mid, underside dark ✓). Corner blocks roof triple ✓. Trunks wood triple ✓ (top bright-ish fine). Canopy bloom/bloomD ✓. Finial gold ✓. Posts wood ✓. Strings wood ✓. Bushes bloom/bloomD ✓.
+
+Great.
+
+Also platform: add slight stone trim? skip.
+
+Let me also double check tier2 body base y=6.02 sits on slab2 top 6.02 ✓ flush. Tier3 base 7.70 = slab2 top ✓. Finial base 9.14 = slab2 top ✓.
+
+Eave lanterns under tier1 slab1: slab1 bottom y=5.6, lantern center 5.42 (box 0.26 tall → 5.29..5.55), string center 5.575 (0.1 tall → 5.525..5.625) overlaps slab bottom slightly — hidden inside slab ✓ fine.
+
+Eave lantern positions: (±1.6, 0) and (0, ±1.6) — slab1 half-width 1.9 → lantern at 1.6 within slab footprint ✓ hangs under overhang beyond body (body half 1.3) ✓ visible from side ✓.
+
+Glow scale eave 1.0, step 1.35, platform 1.3.
+
+Lantern glow y offset +0.12 above lantern center.
+
+Now — sun sprite scale 4.2 at sunset: sprite scale in world units at dist 70 → angular size ~ 4.2/70 rad ≈ 3.4° — visible ✓.
+
+Also maybe add distant "mountains"? skip — palette tight.
+
+I think the design is complete. Write final code with comments, clean structure. Also ensure no console warnings: e.g., three r170 `THREE.Clock` fine.
+
+One more potential gotcha: `renderer.render(blitScene, blitCam)` — blitScene has no background → clear color black flashes? autoClear clears with renderer clear color (default black) then quad draws over full screen ✓ no flash visible.
+
+Also set `renderer.setClearColor(0x000000)` default ✓.
+
+For the inner pass, scene.background = cur.sky Color ✓ clear with sky.
+
+Also: rt.setSize in resize — rt initially 2×2 ✓.
+
+Also on some browsers devicePixelRatio changes on zoom — resize event fires ✓.
+
+Write the HTML now. Also include a tiny footer note? No.
+
+Let me also double-check the water shader compiles: uses `cameraPosition` in fragment — three.js ShaderMaterial fragment prefix includes `uniform vec3 cameraPosition;` — yes, WebGLProgram prefixFragment for ShaderMaterial includes cameraPosition (it's part of the standard prefix since forever: "uniform vec3 cameraPosition;" — actually let me recall precisely: prefixVertex includes cameraPosition? In WebGLProgram.js: prefixVertex contains 'uniform mat4 modelMatrix;' etc. and for fragment: prefixFragment contains 'uniform vec3 cameraPosition;'? Hmm. In recent three versions, prefixFragment includes:
+
+```
+uniform mat4 viewMatrix;
+uniform vec3 cameraPosition;
+uniform bool isOrthographic;
+```
+
+Yes — prefixFragment includes cameraPosition and viewMatrix. ✓ (Used by e.g. envmap chunks in fragment.) Confirmed.
+
+modelMatrix in vertex prefix ✓, projectionMatrix ✓, modelViewMatrix ✓.
+
+Water vertex: `modelMatrix * vec4(position,1.0)` ✓.
+
+Points vertex: modelViewMatrix ✓.
+
+OK writing final answer. Also add comments noting constraints honored (single file, import map, no AA, nearest, instancing, RM).
+
+Length: ~380 lines. Good.
+
+One more consideration on "petals drift in chunky pixels": petal fall speed 0.3-0.65 u/s; inner px/unit ≈ innerH/visibleHeight ≈ 360/21 ≈ 17 px/unit → fall ≈ 5-11 inner px/s ≈ 15-30 screen px/s — chunky ✓. Sway sin continuous but quantized by low res ✓.
+
+Star blink speed 0.22 Hz-ish ✓ gentle.
+
+Also sunset stars 0.25 opacity — subtle ✓.
+
+Final: check button labels match modes: Day/Sunset/Night ✓.
+
+Also title small text mentions moods.
+
+Write it.

@@ -23,6 +23,14 @@ Full table, spread and receipt: [Ling-3.1](ling-3.1/README.md).
 Linux/ROCm; greedy, 64 generated tokens, MTP enabled; three-run medians, nonce per request.
 Ranges and receipt: [Ling-3.0](ling-3.0/README.md). [Add your hardware and version](docs/COMMUNITY_BENCHMARKS.md).
 
+## Showcases
+
+Built by the 3.1 quant on one R9700, one shot each, thinking on, unedited: [all showcases](showcase/README.md).
+
+| [Lighthouse islet at dusk](https://boxwrench.github.io/ling-wrench/showcase/lighthouse/) | [Pixel pagoda](https://boxwrench.github.io/ling-wrench/showcase/pixel-pagoda/) |
+|---|---|
+| [![Lighthouse islet at dusk](showcase/lighthouse/screenshot.png)](https://boxwrench.github.io/ling-wrench/showcase/lighthouse/) | [![Pixel pagoda](showcase/pixel-pagoda/screenshot.png)](https://boxwrench.github.io/ling-wrench/showcase/pixel-pagoda/) |
+
 ## Which file?
 
 | Model | Format / size | Choose it for | Weights | Page |
