@@ -145,8 +145,8 @@ Omit `-dev` and use 60 layers/chunk 4096 for the autosplit fallback; that path s
 and serves `POST /v1/chat/completions` on `127.0.0.1` only. It is non-streaming, single-request, uses the Ling chat
 template, turns thinking off unless the request sets `"thinking": true`, and is greedy when `temperature` is 0. Its
 `timings` field reports the generator's own prefill/decode seconds and token counts. It was tested with curl on a
-short chat (38 prompt / 3 generated, `"pong"`) and the 8K code prompt (8229 prompt / 64 generated: 479.8 tok/s
-prefill, 12.07 tok/s decode, 17.15 s TTFT, 0 cached).
+short chat (38 prompt / 3 generated, `"pong"`) and the 8K code prompt (8230 prompt / 64 generated: 502.3 tok/s
+prefill, 12.06 tok/s decode, 16.38 s TTFT, 0 cached).
 
 ```sh
 EXL3_MOE_STREAM_T=6 python "$PUBLIC_REPO/bench/serve_fast.py" -m "$MODEL" \

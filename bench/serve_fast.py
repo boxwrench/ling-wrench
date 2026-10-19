@@ -128,6 +128,8 @@ def main():
         system, pairs = messages_to_pairs(body.get("messages") or [])
         system_prompt = system or fmt.default_system_prompt(think)
         text = fmt.format(system_prompt, pairs, think)
+        if think and fmt.thinktag()[0] is not None and fmt.inject_thinktag():
+            text += fmt.thinktag()[0]
         ids = tokenizer.encode(text, add_bos=fmt.add_bos(), encode_special_tokens=True)
         prompt_len = ids.shape[1]
         requested = body.get("max_tokens", body.get("max_completion_tokens", args.max_tokens))
