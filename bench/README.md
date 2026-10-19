@@ -10,6 +10,8 @@ One harness directory for both releases. Follow [INSTALL](../docs/INSTALL.md) to
 | [check_determinism.py](check_determinism.py) | one-load 8K-code repeatability screen; does not establish portable output identity |
 | [serve_check.py](serve_check.py) | 3.0 API sanity checks plus streamed timings; raw per-server output |
 | [exllamav3-rocm-smem.patch](exllamav3-rocm-smem.patch) | shared-memory lookup fallback for the pinned ROCm stack; tested on gfx1201 only |
+| [exllamav3-explicit-device.patch](exllamav3-explicit-device.patch) | opt-in `-dev/--device` for `model_init` entry points such as `examples/chat.py`; local, not upstream |
+| [serve_fast.py](serve_fast.py) | local OpenAI-compatible chat endpoint with the measured fast loader; stdlib only, one request at a time |
 
 ## Runner settings
 
@@ -47,3 +49,18 @@ The 3.0 API harness output needs manual assembly into the release schema; preser
 `CUDA_VISIBLE_DEVICES=1` that is the R9700 on the reference box). Omit `--device` to keep autosplit. The option is
 passed to each context subprocess and recorded as `config.load_device`. Explicit loading skips autosplit's VRAM budget
 checks, so use a layer count and chunk size measured to fit.
+
+`exllamav3-explicit-device.patch` exposes the same choice to `examples/chat.py` and other `model_init` entry points as
+`-dev/--device`; it defaults to autosplit and refuses to combine with `-gs` or `-tp`.
+
+## Fast local server
+
+`serve_fast.py` uses the measured loader settings and serves `POST /v1/chat/completions` on `127.0.0.1` only. It is
+non-streaming, handles one request at a time, uses the Ling chat template with thinking off unless the request sets
+`"thinking": true`, and is greedy when `temperature` is 0 or absent. The response's `timings` object carries the
+generator's own prefill/decode times and token counts.
+
+```sh
+EXL3_MOE_STREAM_T=6 python bench/serve_fast.py -m "$MODEL" \
+  -dev cuda:0 -mcl 62 -mct 8 -gcs 8192 -cs 9216 --port 8000
+```

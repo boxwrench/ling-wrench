@@ -1,0 +1,37 @@
+diff --git a/exllamav3/model_init.py b/exllamav3/model_init.py
+index c3932b10..0571b27f 100755
+--- a/exllamav3/model_init.py
++++ b/exllamav3/model_init.py
+@@ -59,6 +59,7 @@ def add_args(
+         int, value for -chunk_size / --chunk_size
+     """
+     parser.add_argument("-m", "--model_dir", type = str, help = "Path to model directory", required = True)
++    parser.add_argument("-dev", "--device", type = str, help = "Load the model on one explicit device, e.g. cuda:0. Default: autosplit across visible devices.")
+     parser.add_argument("-gs", "--gpu_split", type = str, help = "Maximum amount of VRAM to use per device, in GB.")
+     parser.add_argument("-lm", "--load_metrics", action = "store_true", help = "Show metrics from loader")
+     parser.add_argument("-or", "--override", type = str, help = "Tensor override spec (YAML)", default = None)
+@@ -206,6 +207,13 @@ def init(
+     def printp(p: bool, s: str):
+         if p: print(s)
+ 
++    device = getattr(args, "device", None)
++    if device is not None:
++        if getattr(args, "gpu_split", None) is not None:
++            raise ValueError("--device and --gpu_split (-gs) are mutually exclusive; use --device for a single-device load")
++        if getattr(args, "tensor_parallel", False):
++            raise ValueError("--device and --tensor_parallel (-tp) are mutually exclusive; use --device for a single-device load")
++
+     return_draft = "draft_model_dir" in args
+     draft_model_dir = args.draft_model_dir if return_draft else None
+     if "mtp" in args:
+@@ -388,7 +396,10 @@ def init(
+ 
+     # Load model
+     printp(not quiet, f" -- Loading {args.model_dir}")
++    if device is not None:
++        printp(not quiet, f" -- Single device: {device}")
+     model.load(
++        device = device,
+         use_per_device = split,
+         tensor_p = args.tensor_parallel,
+         progressbar = progress,
