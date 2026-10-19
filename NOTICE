@@ -74,6 +74,12 @@ the MIT License:
 The scripts here call exllamav3 as an installed dependency and do not vendor or
 copy its source. The EXL3 trellis method builds on QTIP.
 
+Ling-3.0 serving measurements use vLLM (Apache-2.0):
+
+    https://github.com/vllm-project/vllm
+
+No vLLM source is vendored here.
+
 Benchmark inputs
 
 The 3.1 input windows are built by bench/build_inputs.py from one public-domain

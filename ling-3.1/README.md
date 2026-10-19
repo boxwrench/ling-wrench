@@ -1,197 +1,87 @@
 # Ling-3.1-flash — Wrench EXL3 2.10 bpw
 
-An EXL3 trellis quant of [inclusionAI/Ling-3.1-flash](https://huggingface.co/inclusionAI/Ling-3.1-flash) at 2.10 bits per weight, 153.6 GB. The weights are at [boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw](https://huggingface.co/boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw); this page holds the measured numbers, the exact run command and the benchmark harness shared with the Ling-3.0 releases.
+153.6 GB EXL3 quant of [inclusionAI/Ling-3.1-flash](https://huggingface.co/inclusionAI/Ling-3.1-flash).
+Weights: [boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw](https://huggingface.co/boxwrench/Ling-3.1-flash-exl3-wrench-2.10bpw).
+Runs on a GPU with most routed experts computed on the CPU from system RAM.
 
-Part of [boxwrench/ling-wrench](https://github.com/boxwrench/ling-wrench).
-
-> **Status, 2026-10-18: public harness runs; speed values remain provisional.** The table below was measured with
-> `bench/run_bench.py` on exllamav3 `0f8cf2c3` plus the documented ROCm shared-memory fallback. All four input hashes
-> match the original benchmark; all eight measured passes generated 256 tokens with zero cached tokens. Decode is
-> within the original repeat floors, while prefill is 8–11% lower. A large host file transfer overlapped this run;
-> quiet confirmation is pending before treating the prefill values as reproducible. All speed rows use this run.
-
-## Base model
-
-Ling-3.1-flash is inclusionAI's 560B-total, ~25B-active hybrid MoE. It has 63 KDA linear-attention layers and 9 gated MLA layers, an MTP head, and a 1M-token context window. It is MIT-licensed; see the [model card](https://huggingface.co/inclusionAI/Ling-3.1-flash).
-
-## This quant
-
-The file is an EXL3 trellis quantization at 2.10 bpw (153.6 GB). It runs on one 32 GB GPU by keeping the routed experts mostly in system RAM and computing them on the CPU. Calibration was weighted toward agentic coding and tool use, with a general-text floor; it uses exllamav3's standard 2.10 bpw module allocation (`-b 2.0 -hq 2`), so the intended difference from other files at this size is the calibration content.
-
-## Speed, one R9700
-
-Reference machine: AMD Radeon AI PRO R9700 32 GB (gfx1201), Ryzen 7 9800X3D
-8-core CPU, and 192 GB DDR5. The 7900 XT is unused for compute.
-
-Raw continuation, greedy, 256 generated tokens, no speculation and no prefix reuse. Prefill is prompt tokens divided by time to first token; decode excludes the first token. Two measured repetitions after an excluded warm-up.
+## Speed
 
 <!-- BENCH:START -->
 | Context | Domain | Prefill tok/s | Decode tok/s | TTFT (s) |
 |---:|---|---:|---:|---:|
-| 8K | prose | 346.0 | 11.15 | 23.67 |
-| 8K | code | 343.7 | 11.76 | 23.83 |
-| 64K | prose | 346.3 | 7.86 | 189.23 |
-| 64K | code | 346.0 | 8.00 | 189.44 |
+| 8K | prose | 486.6 | 12.02 | 16.84 |
+| 8K | code | 498.7 | 12.07 | 16.43 |
+| 64K | prose | 476.5 | 7.86 | 137.53 |
+| 64K | code | 476.4 | 7.64 | 137.58 |
 <!-- BENCH:END -->
+
+Measured 2026-10-18 on one R9700 32 GB, Ryzen 7 9800X3D, 192 GB DDR5;
+Linux/ROCm 7.2.1, exllamav3 `0f8cf2c3` plus the [ROCm patch](../bench/exllamav3-rocm-smem.patch).
+Prefill = prompt tokens / time to first token (reading the prompt); decode = generated tokens after the first / their time
+(writing the answer). Greedy, 256 tokens, no speculation or prefix reuse; two measured runs after one excluded warm-up.
+Settings: explicit single-device load (`--device cuda:0`), `EXL3_MOE_STREAM_T=6`, chunk 8192, 62 CPU-MoE layers,
+8 threads ([results.json](results/results.json)). Against the default load (autosplit, chunk 4096: 351.2/347.6 at 8K,
+345.8/348.0 at 64K) that is +38-43% prefill with unchanged decode. A six-window exact comparison with the FP8 model
+puts the change inside the same-settings repeat noise (no measurable quality change).
+Per-cell spreads and conditions: [REPRODUCE](../docs/REPRODUCE.md#reading-the-results).
 
 <!-- RECEIPT:START -->
 | Item | Value |
 |---|---|
-| Hardware | AMD Radeon AI PRO R9700; x86_64; 186 GB |
-| Software | Ubuntu 24.04.5 LTS; kernel 7.0.0-28-generic; ROCm 7.2.53211-e1a6bc5663; PyTorch 2.9.1+rocm7.2.1.gitff65f5bc; exllamav3 0f8cf2c3f052a2503e98c1e77d40b2f055047bcc (+local diff sha256 e9a50674a7ef9a1f728a75cdc7311ae8a65f954887a5109c3aaa55b4787dc439) |
-| Run | CPU-MoE layers / threads / chunk 60 (8K) or 62 (64K) / 8 / 4,096; env `CUDA_VISIBLE_DEVICES=1`, `LD_LIBRARY_PATH=/opt/rocm-7.2.1/lib`, `OMP_NUM_THREADS=8`, `PYTORCH_ALLOC_CONF=expandable_segments:True`, `PYTORCH_ROCM_ARCH=gfx1201`; peak VRAM / RAM 30.9 GB / 132.2 GB |
+| Hardware | AMD Radeon AI PRO R9700 32 GB (gfx1201); AMD Ryzen 7 9800X3D; 192 GB DDR5 |
+| Software | Ubuntu 24.04.5 LTS; kernel 7.0.0-28-generic; ROCm 7.2.1 (HIP 7.2.53211); PyTorch 2.9.1+rocm7.2.1.gitff65f5bc; exllamav3 0f8cf2c3f052a2503e98c1e77d40b2f055047bcc (+local diff sha256 e9a50674a7ef9a1f728a75cdc7311ae8a65f954887a5109c3aaa55b4787dc439) |
+| Run | CPU-MoE layers / threads / chunk 62 (8K) or 62 (64K) / 8 / 8,192; env `CUDA_VISIBLE_DEVICES=1`, `EXL3_MOE_STREAM_T=6`, `LD_LIBRARY_PATH=/opt/rocm-7.2.1/lib`, `OMP_NUM_THREADS=8`, `PYTORCH_ALLOC_CONF=expandable_segments:True`, `PYTORCH_ROCM_ARCH=gfx1201`; peak VRAM / RAM 31.2 GiB / 134.7 GiB |
 <!-- RECEIPT:END -->
 
-## Quality
+Memory peaks are GiB despite the JSON's legacy `_gb` keys. VRAM is the torch allocator peak;
+host usage is system-wide, not process RSS. Loading can peak higher.
 
-Next-token distribution against the FP8 base model on 92 x 4K windows. Lower KL and higher top-1 are better.
+## Quality
 
 <!-- QUALITY:START -->
 | Candidate | Size | KL top-64 | Top-1 |
 |---|---:|---:|---:|
 | Wrench EXL3 2.10 bpw | 153.6 GB | 0.922 | 77.99 % |
 | Best other public quant at this size (as of 2026-10-18) | 153.6 GB | 0.962 | 77.66 % |
+| bartowski IQ2_XXS (GGUF) | 170.8 GB | 1.085 | 75.21 % |
 
-**Verdict.** Mixed result; neither file is better overall. By KL, Wrench is 4.1% closer to the FP8 model (95% CI -0.052 to -0.027), all of it on the agentic-coding windows; on general text the other quant is slightly closer. The other quant also gives the actual next token higher probability on six full-vocabulary windows (NLL 0.085 lower, 6/6). Deterministic scorer (identical repeats). KL is not task accuracy. Same-config repeat floor: 0.0000.
+**Verdict.** Against bartowski's IQ2_XXS GGUF (170.8 GB, 11% larger), Wrench is closer to the FP8 model on all 92 windows (KL 0.922 vs 1.085; 95% CI of the difference +0.138 to +0.189) with 2.8 points higher top-1; bartowski's file gives the actual next token higher probability on the three agentic-coding windows of six full-vocabulary windows. Against the best other public quant at this size, the result is mixed: Wrench is 4.1% closer by KL (95% CI -0.052 to -0.027), all on agentic-coding windows; on general text the other file is slightly closer, and it gives the actual next token higher probability (NLL 0.085 lower, 6/6). Repeated measurements were identical. KL is not task accuracy. Same-config repeat floor: 0.0000.
 <!-- QUALITY:END -->
 
-## Runtime techniques
-
-- [exllamav3](https://github.com/turboderp-org/exllamav3) at `0f8cf2c3`, which includes Ling support and the RDNA K = 2 trellis fix ([#519](https://github.com/turboderp-org/exllamav3/pull/519)), plus a one-file ROCm shared-memory fallback (`bench/exllamav3-rocm-smem.patch`).
-- Routed experts are split between VRAM and system RAM. `-mcl` sets how many expert layers the CPU worker runs; `-mct` sets its thread count.
-- Prompt chunk size (`-gcs`) and thread count (`-mct`) were tuned on this box; the benchmark command and receipt record the values used.
-- MTP is present in the file but disabled for these measurements.
+Agreement with the FP8 base on 92 × 4096-token windows; KL and top-1 are not task accuracy.
+Scored on the same R9700 with exllamav3 in its deterministic settings ([quality JSON](results/quality.json)).
 
 ## Run it
 
-Use Python 3.12 and the ROCm 7.2.1 development tools. These are the exact
-AMD wheels used below; a generic `pip install torch` selects a different stack.
-The download is about 1.9 GB. Keep the already-downloaded wheel files if available.
+**Known ROCm issue:** this torch build lacks `shared_memory_per_block`, so the pinned runtime
+fails at first decode without the [published patch](../bench/exllamav3-rocm-smem.patch). Apply it as described in INSTALL.
+
+First follow [INSTALL](../docs/INSTALL.md) for the pinned runtime, wheels, patch, environment and weights.
+**The measured speed uses the benchmark runner** (`bench/run_bench.py --device cuda:0`, see [REPRODUCE](../docs/REPRODUCE.md)).
+exllamav3's `examples/chat.py` always loads with autosplit, which measured about 350 tok/s prefill here; a faster
+interactive path is being tested. **Untested interactive launch** (flags checked, chat not rerun):
 
 ```sh
-git clone https://github.com/boxwrench/ling-wrench.git
-git clone https://github.com/turboderp-org/exllamav3.git
-cd exllamav3
-git checkout 0f8cf2c3
-git apply ../ling-wrench/bench/exllamav3-rocm-smem.patch
-python3.12 -m venv .venv
-. .venv/bin/activate
-python -m pip install \
-  'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1.lw.gitff65f5bc-cp312-cp312-linux_x86_64.whl' \
-  'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/triton-3.5.1%2Brocm7.2.1.gita272dfa8-cp312-cp312-linux_x86_64.whl'
-python -m pip install -r requirements.txt -r requirements_examples.txt
-export CC=/opt/rocm-7.2.1/llvm/bin/clang
-export CXX=/opt/rocm-7.2.1/llvm/bin/clang++
-export LD_LIBRARY_PATH=/opt/rocm-7.2.1/lib
-export OMP_NUM_THREADS=8
-export PYTORCH_ALLOC_CONF=expandable_segments:True
-export CUDA_VISIBLE_DEVICES=1   # R9700 on the reference box; use 0 for one GPU
-python -m pip install -e .
-python -c 'import exllamav3'    # builds/loads the extension; wait for exit 0
-export MODEL_DIR=/path/to/Ling-3.1-flash-exl3-wrench-2.10bpw
-python examples/chat.py \
-  -m "$MODEL_DIR" \
-  -mode ling -no_think -temp 0 \
-  -mcl 60 -mct 8 -gcs 4096 -cs 9216
+EXL3_MOE_STREAM_T=6 python "$EXL3/examples/chat.py" -m "$MODEL" -mode ling -no_think -temp 0 -mcl 60 -mct 8 -gcs 4096 -cs 9216
 ```
 
-This is the 8K placement. For 64K use `-mcl 62 -cs 66560`, keeping `-mct 8
--gcs 4096`. Higher `-mcl` puts more expert layers in system RAM, leaving room for
-the attention cache. Chunk 8192 produced non-finite logits at step 0 on this
-stack; use 4096. The shared-memory patch is required on this torch build;
-[PyTorch 2.9.1's ROCm source](https://github.com/pytorch/pytorch/blob/v2.9.1/torch/csrc/cuda/Module.cpp)
-also excludes the property, so installing its standard ROCm 6.4 wheel is not a
-verified substitute. The 64 KiB fallback is verified here only on the R9700.
+Under autosplit this is the measured 8K placement (64K: 62 CPU-MoE layers, cache 66560). With the explicit loader the
+measured placement is 62 CPU-MoE layers and chunk 8192 at both 8K and 64K.
+Other GPUs and settings: [INSTALL](../docs/INSTALL.md). With a coding agent: [AI_SETUP](../docs/AI_SETUP.md).
+Problems: [TROUBLESHOOTING](../docs/TROUBLESHOOTING.md).
 
+## Reproduce
 
-## Reproduce the benchmark
+[REPRODUCE](../docs/REPRODUCE.md) has the pinned inputs, checksum check, exact matrix and reporting rules.
+Raw results and receipts: [results/](results/README.md). Harness details: [bench/](../bench/README.md).
 
-The inputs are the PG-19 test file (`emozilla/pg19` revision
-`c021754c8e01c5b1cc83a1f549c1f97fbbb756b8`, `data/test-00000-of-00001-29a571947c0b5ccc.parquet`;
-DeepMind, Apache-2.0) and llama.cpp `src/*.cpp` at
-`e467e5b5e5ba43071d6151b3d881deb9300d000e` (MIT), tokenized with the Ling
-tokenizer. Input token ids are not redistributed; only the builder and checksums are
-published.
+## Limits
 
-```sh
-# Keep the exllamav3 venv and environment above active.
-export EXLLAMAV3="$PWD"
-cd ../ling-wrench
-pip install pyarrow huggingface_hub
-git clone https://github.com/ggml-org/llama.cpp
-git -C llama.cpp checkout e467e5b5e5ba43071d6151b3d881deb9300d000e
-cp bench/inputs/SHA256SUMS /tmp/ling31-expected.sha256
-python bench/build_inputs.py \
-  --tokenizer "$MODEL_DIR" \
-  --pg19 hf://emozilla/pg19@test \
-  --pg19-revision c021754c8e01c5b1cc83a1f549c1f97fbbb756b8 \
-  --code-dir ./llama.cpp \
-  --out bench/inputs
-(cd bench/inputs && sha256sum -c /tmp/ling31-expected.sha256)
-```
+- One Linux/ROCm machine measured; CUDA and other GPUs untested. The shared-memory fallback is tested only on gfx1201.
+- Default greedy outputs can differ across repetitions. A repeatability screen's matching pairs do not guarantee token identity.
+- Chunk 8192 is measured only with the explicit loader and 62 CPU-MoE layers; under autosplit it gave non-finite logits, so use 4096 there.
 
-All four checks must print `OK`. The expected hashes are copied before the
-builder overwrites `SHA256SUMS`. A local
-copy of the pinned PG-19 test parquet can replace `hf://emozilla/pg19@test`.
+## Credits
 
-```sh
-export LD_LIBRARY_PATH=/opt/rocm-7.2.1/lib
-export OMP_NUM_THREADS=8
-export PYTORCH_ALLOC_CONF=expandable_segments:True
-unset PYTHONPATH EXL3_MOE_STREAM_T EXL3_MOE_STREAM_FUSED_T EXL3_MOE_RECON_DET
-CUDA_VISIBLE_DEVICES=1 python bench/run_bench.py \
-  --model "$MODEL_DIR" \
-  --inputs bench/inputs \
-  --exllamav3 "$EXLLAMAV3" \
-  --contexts 8192,65536 --cpu-moe-layers 60,62 \
-  --threads 8 --chunk 4096 \
-  --reps 2 --warmup 1 \
-  --revision 008db908a26ac55a2999b29617297287b15d187e \
-  --out ling-3.1/results/results.json
-```
-
-This is the exact configuration and stack in the receipt: exllamav3
-`0f8cf2c3` plus the one-file ROCm shared-memory patch
-(`bench/exllamav3-rocm-smem.patch`, sha256
-`9744c8e95882f25727d9921346611d37f803297eccbdc0d72241f098fa39c0f2`); without it
-the first decode raises `AttributeError: shared_memory_per_block`.
-`CUDA_VISIBLE_DEVICES=1` selects the R9700 on the reference box; use 0 on a
-single-GPU machine. The 7900 XT stays unused.
-
-### Explicit device and faster prefill
-
-`--device cuda:0` selects exllamav3's explicit single-device loader for the
-visible R9700 instead of autosplit (also documented in `bench/README.md`). It is
-passed to each context subprocess and recorded as `config.load_device`. On the
-reference box it removed autosplit's VRAM-budget path and, with
-`EXL3_MOE_STREAM_T=6`, measured 8K 385.9/387.5 tok/s (prose/code) and 64K
-399.3/394.7, against 351.2/347.6 and 345.8/348.0 for the command above; decode
-was unchanged. Explicit loading skips autosplit's budget checks, so the chunk and
-layer count must fit.
-
-The same settings with `--chunk 8192` and `--cpu-moe-layers 62` measured
-486.6/498.7 at 8K, 490.3 at 16K code and 476.5/476.4 at 64K, with decode
-12.02/12.07 (8K) and 7.86/7.64 (64K). Six-window exact-KL checks against FP8
-at 60 layers / chunk 4096 and 62 layers / chunk 8192 put both regroupings inside
-the same-config repeat floor. These are local verification numbers: the release
-receipt above remains the autosplit/chunk-4096 matrix until the owner regenerates
-it.
-
-```sh
-python tools/fill_results.py --profile 3.1
-python tools/fill_results.py --profile 3.1 --check
-```
-
-The runner uses one model process per context, with 60 CPU-MoE layers at 8K and 62 at 64K. `ling-3.1/results/results.json` records the command, environment, input hashes, timings and peak memory. `bench/README.md` has the full flag list and input-selection rules.
-
-The [8K-code repeatability screen](../bench/README.md#greedy-repeatability-screen)
-found identical output pairs with and without the deterministic controls in
-one load. Those controls cost 39.95% prefill time here and are not enabled in
-the speed command. Output identity is not promised across default runs.
-
-## Credits and license
-
-- Base model: [inclusionAI/Ling-3.1-flash](https://huggingface.co/inclusionAI/Ling-3.1-flash), MIT. The upstream copyright and permission notice is reproduced in [NOTICE](../NOTICE).
-- Converter and runtime: [turboderp-org/exllamav3](https://github.com/turboderp-org/exllamav3), MIT, including the Ling support and the AMD K = 2 trellis fix.
-- Benchmark input sources: PG-19 (DeepMind, Apache-2.0) and llama.cpp (MIT).
-- The scripts and documentation here are MIT; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE). The weights are a derivative of Ling-3.1-flash under the same MIT terms.
+inclusionAI for Ling-3.1-flash (MIT); [exllamav3](https://github.com/turboderp-org/exllamav3) (MIT) for conversion/runtime;
+benchmark text: PG-19 (DeepMind, Apache-2.0), llama.cpp (MIT). [NOTICE](../NOTICE).

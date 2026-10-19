@@ -1,0 +1,20 @@
+# Ling Wrench
+
+Low-bit Ling quants, measured runtime receipts and setup/reproduction guides.
+Linux/ROCm measured; CUDA untested. All links below are raw text.
+
+- [Repository guide](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/README.md)
+- [Agent rules](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/AGENTS.md)
+- [Agent setup, steps 0–9](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/docs/AI_SETUP.md)
+- [Install](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/docs/INSTALL.md)
+- [Troubleshooting](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/docs/TROUBLESHOOTING.md)
+- [Reproduce](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/docs/REPRODUCE.md)
+- [Community benchmarks](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/docs/COMMUNITY_BENCHMARKS.md)
+- [Test requests](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/docs/TEST_REQUESTS.md)
+- [Ling-3.1](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/ling-3.1/README.md)
+- [Ling-3.0](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/ling-3.0/README.md)
+- [Harness](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/bench/README.md)
+- [3.1 speed JSON](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/ling-3.1/results/results.json)
+- [3.1 quality JSON](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/ling-3.1/results/quality.json)
+- [3.0 serving JSON](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/ling-3.0/results/runtime.json)
+- [Licence notices](https://raw.githubusercontent.com/boxwrench/ling-wrench/main/NOTICE)

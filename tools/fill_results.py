@@ -4,7 +4,8 @@
 Both releases use the schema `ling-r9700-bench/1`, with a `kind` field:
 
   * `exl3-bench` (Ling-3.1) - BENCH, RECEIPT and QUALITY blocks.
-  * `serving-check` (Ling-3.0) - RUNTIME and RECEIPT blocks.
+  * `serving-check` (Ling-3.0) - RUNTIME and RECEIPT blocks; a card
+    selects one checkpoint with an HTML MODEL_REPO marker.
 
 Reads `ling-3.1/results/results.json` and/or `ling-3.0/results/runtime.json`,
 plus the optional 3.1 `results/quality.json`, then rewrites the marker blocks in
@@ -16,6 +17,7 @@ identical files.
 
 import argparse
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -95,8 +97,8 @@ def render_receipt(res):
                           for x in (layers, threads, chunk))
     env = cfg.get("env") or {}
     env_text = ", ".join(f"`{k}={v}`" for k, v in sorted(env.items())) if env else "none"
-    vram = fmt(res.get("peak_vram_gb"), 1, " GB")
-    ram = fmt(res.get("peak_ram_gb"), 1, " GB")
+    vram = fmt(res.get("peak_vram_gb"), 1, " GiB")
+    ram = fmt(res.get("peak_ram_gb"), 1, " GiB")
     rows = [
         ("Hardware", f"{hw.get('gpu') or 'TBD'}; {hw.get('cpu') or 'TBD'}; {hw.get('ram') or 'TBD'}"),
         ("Software", f"{hw.get('os') or 'TBD'}; kernel {hw.get('kernel') or 'TBD'}; "
@@ -142,7 +144,7 @@ def _span(vals, nd):
     return f"{med:.{nd}f} [{min(vals):.{nd}f}-{max(vals):.{nd}f}]"
 
 
-def render_runtime(res):
+def render_runtime(res, include_protocol=True):
     lines = [
         "| Model | Status | Prompt | Prefill tok/s | Decode tok/s | TTFT (s) |",
         "|---|---|---:|---:|---:|---:|",
@@ -159,7 +161,7 @@ def render_runtime(res):
             tt = _span(_vals(runs, "ttft_s"), 2)
             lines.append(f"| {name} | {status} | {label} | {pp} | {tg} | {tt} |")
     note = res.get("protocol")
-    if note:
+    if note and include_protocol:
         lines += ["", f"Median of the runs; brackets are min-max. {note}"]
     return "\n".join(lines)
 
@@ -266,7 +268,7 @@ def main():
     ap.add_argument("--page", type=Path, default=None,
                     help="page to render with --results (default: <root>/README.md)")
     ap.add_argument("--card", type=Path, default=None,
-                    help="optional HF card draft to render too")
+                    help="optional HF card draft; 3.0 cards need a MODEL_REPO marker")
     ap.add_argument("--check", action="store_true",
                     help="do not write; fail if a managed block still contains TBD")
     args = ap.parse_args()
@@ -294,7 +296,7 @@ def main():
             jobs = [j for j in jobs if j["profile"] == args.profile]
         if args.card:
             for j in jobs:
-                if j["profile"] == "3.1":
+                if j["profile"] == (args.profile or "3.1"):
                     j["card"] = args.card
         if not jobs:
             raise SystemExit(f"no results JSON under {root}")
@@ -343,7 +345,15 @@ def main():
             text = f.read_text(encoding="utf-8")
             new = text
             used = []
-            for name, body in job["bodies"].items():
+            bodies = job["bodies"]
+            if job["profile"] == "3.0" and f == job.get("card"):
+                marker = re.search(r"<!-- MODEL_REPO:([^\s]+) -->", text)
+                models = [m for m in job["res"].get("models", [])
+                          if marker and m.get("repo") == marker.group(1)]
+                if len(models) != 1:
+                    raise SystemExit("3.0 card needs MODEL_REPO matching exactly one results checkpoint")
+                bodies = {"RUNTIME": render_runtime(dict(job["res"], models=models), include_protocol=False)}
+            for name, body in bodies.items():
                 new, hit = replace_block(new, name, body)
                 if hit:
                     used.append(name)

@@ -154,7 +154,7 @@ def test_31(root):
     readme = (root / "README.md").read_text(encoding="utf-8")
     assert "TBD" not in readme, readme
     assert "123.4" in readme and "1088.70" in readme, readme
-    assert "31.2 GB / 96.5 GB" in readme, readme
+    assert "31.2 GiB / 96.5 GiB" in readme, readme
     assert "Wrench is ahead" in readme, readme
     assert "0.0020" in readme, readme
 
@@ -199,6 +199,17 @@ def test_30(root):
     run("--root", root, "--results", rp, "--page", root / "README.md")
     assert digest(root / "README.md") == h1, "3.0 renderer is not idempotent"
     run("--root", root, "--results", rp, "--page", root / "README.md", "--check")
+
+    # A single-checkpoint card must not inherit the official or other file's rows.
+    card = root / "card.md"
+    card.write_text("<!-- MODEL_REPO:boxwrench/test -->\n" + SKELETON_30)
+    run("--root", root, "--results", rp, "--page", root / "README.md", "--card", card)
+    rendered = card.read_text()
+    assert "| Wrench | SERVES OK | 8K | 1083.0" in rendered, rendered
+    assert "| Official INT4 |" not in rendered, rendered
+    before = digest(card)
+    run("--root", root, "--results", rp, "--page", root / "README.md", "--card", card)
+    assert digest(card) == before, "3.0 card renderer is not idempotent"
 
     # A serving JSON with no models leaves TBD -> check must fail.
     rp.write_text(json.dumps({"schema": "ling-r9700-bench/1", "kind": "serving-check",
