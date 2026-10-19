@@ -86,6 +86,8 @@ EXL3_MOE_STREAM_T=6 python bench/serve_fast.py -m "$MODEL" \
   -dev cuda:0 -nw -mcl 62 -mct 8 -gcs 8192 -cs 9216 --port 8000
 ```
 
+**First long request after start (known issue, 2026-10-19):** with `-nw`, a cold server whose very first request was an 8K prompt returned `NonFiniteLogits` at step 0 (twice), even though the server had finished its short startup warm-up. Sending one short request first (any few-token chat), then the long prompt, worked every time. Until this is fixed: send a short request first after starting `serve_fast.py`, and in `examples/chat.py` start with a short message. If a long prompt ever returns `NonFiniteLogits`, send a short request and retry.
+
 Other GPUs and settings: [INSTALL](../docs/INSTALL.md). With a coding agent: [AI_SETUP](../docs/AI_SETUP.md).
 Problems: [TROUBLESHOOTING](../docs/TROUBLESHOOTING.md).
 

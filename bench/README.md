@@ -57,7 +57,7 @@ checks, so use a layer count and chunk size measured to fit.
 
 `serve_fast.py` uses the measured loader settings and serves `POST /v1/chat/completions` on `127.0.0.1` only. It is
 non-streaming, handles one request at a time, uses the Ling chat template with thinking off unless the request sets
-`"thinking": true`, and is greedy when `temperature` is 0 or absent. The response's `timings` object carries the
+`"thinking": true`, and is greedy when `temperature` is 0 or absent. **After starting it, send one short request before the first long prompt**: a cold server whose first request was 8K returned `NonFiniteLogits` at step 0; a short request first avoided it (see [TROUBLESHOOTING](../docs/TROUBLESHOOTING.md)). The response's `timings` object carries the
 generator's own prefill/decode times and token counts.
 
 ```sh

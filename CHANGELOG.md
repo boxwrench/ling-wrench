@@ -1,3 +1,7 @@
+# v0.4.1 — 2026-10-19
+
+- Known issue: with `-nw`, the first long request to a cold server can return `NonFiniteLogits`; send a short request first. Documented in the 3.1 page, bench README and TROUBLESHOOTING.
+
 # v0.4 — 2026-10-19
 
 - Showcases: two one-shot three.js demos by the 3.1 quant with thinking on (`showcase/`), with prompts, reasoning,
