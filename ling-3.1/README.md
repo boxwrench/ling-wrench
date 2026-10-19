@@ -77,7 +77,9 @@ measured autosplit fallback (60 CPU-MoE layers, chunk 4096, about 350 tok/s pref
 
 For agents and showcases, [bench/serve_fast.py](../bench/serve_fast.py) loads with the same flags and serves
 `POST /v1/chat/completions` on localhost only. It is non-streaming, handles one request at a time, uses the Ling chat
-template with thinking off unless the request sets `"thinking": true`, and is greedy by default.
+template with thinking off unless the request sets `"thinking": true`, and is greedy by default. Requests may set
+`top_p`, `top_k` and `seed`; with thinking on, `reasoning_content` and the reasoning/answer token counts are reported
+separately and `content` is the answer after `</think>`.
 
 ```sh
 EXL3_MOE_STREAM_T=6 python bench/serve_fast.py -m "$MODEL" \
@@ -97,6 +99,7 @@ Raw results and receipts: [results/](results/README.md). Harness details: [bench
 - One Linux/ROCm machine measured; CUDA and other GPUs untested. The shared-memory fallback is tested only on gfx1201.
 - Default greedy outputs can differ across repetitions. A repeatability screen's matching pairs do not guarantee token identity.
 - Chunk 8192 is measured only with the explicit loader and 62 CPU-MoE layers; under autosplit it gave non-finite logits, so use 4096 there.
+- The explicit loader does not budget VRAM. On an idle 32 GB R9700, cache sizes 16384-66560 all gave finite step-0 logits; 66560 reserved 26.54 GiB and left 7.03 GiB free after load. A 32768-token server failed at step 0 while another process held 19.4 GiB on the same GPU, and the same command was clean on an idle card. Check `rocm-smi --showpids`/free VRAM and do not share the card; if you must, use autosplit.
 
 ## Credits
 

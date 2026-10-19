@@ -110,11 +110,20 @@ Repeat the same download command to resume. Check errors and remaining disk befo
 | Measured, `bench/serve_fast.py` (curl: short chat and 8K code) | same | short and 8192 | 62 | 8 | 8192 | 9216 |
 | Measured, default autosplit (no `-dev`; also `examples/chat.py` fallback) | same | 8192 | 60 | 8 | 4096 | 9216 |
 | Measured, default autosplit | same | 65536 | 62 | 8 | 4096 | 66560 |
+| Measured, explicit `-dev` cache sweep | same | 1.5K | 62 | 8 | 8192 | 16384, 20480, 24576, 32768, 40960, 49152, 65536, 66560: all finite at step 0 |
 | Untested guidance | smaller GPU / same host | start short | increase from the matching row | start at physical cores | 4096 | leave prompt/output headroom |
 | Untested guidance | larger GPU | start short | fewer CPU layers may fit | measure again | 4096 | measure again |
 
 Rows describe one machine, not minimum requirements. More CPU layers free VRAM but need more host RAM.
 Thread counts above physical cores reduced decode in the tuning run; do not assume more is faster.
+
+**Cache size and VRAM headroom.** The explicit `-dev` loader places the selected layers and the whole cache on one
+card and skips autosplit's VRAM budgeting. On the idle 32 GB R9700 with `-mcl 62`, cache sizes 16384 through 66560 all
+produced finite logits at step 0; 66560 reserved 26.54 GiB and left 7.03 GiB free after load (4.60 GiB after a
+1.5K-token prompt and 16 new tokens). A 32768-token server that failed at step 0 was running while another process
+held 19.4 GiB on the same GPU; the same 32768 command generated 10,213 tokens cleanly once the card was idle. Check
+`rocm-smi --showpids` and free VRAM before an explicit load, and do not share the card. If it is shared, use the
+default autosplit (it budgets) or a smaller cache, and re-check. Cache size alone was not a limit here.
 
 **Checked flag/mode listing** (does not load the model; exit 0):
 
@@ -143,8 +152,10 @@ Omit `-dev` and use 60 layers/chunk 4096 for the autosplit fallback; that path s
 
 **Agents and showcases.** [bench/serve_fast.py](../bench/serve_fast.py) loads with the same flags, warms up once,
 and serves `POST /v1/chat/completions` on `127.0.0.1` only. It is non-streaming, single-request, uses the Ling chat
-template, turns thinking off unless the request sets `"thinking": true`, and is greedy when `temperature` is 0. Its
-`timings` field reports the generator's own prefill/decode seconds and token counts. It was tested with curl on a
+template, turns thinking off unless the request sets `"thinking": true`, and is greedy when `temperature` is 0.
+Requests may also set `top_p`, `top_k` and `seed`; with thinking on, `reasoning_content` and the token counts are
+reported separately and `content` is the answer after `</think>`. Its `timings` field reports the generator's own
+prefill/decode seconds and token counts. It was tested with curl on a
 short chat (38 prompt / 3 generated, `"pong"`) and the 8K code prompt (8230 prompt / 64 generated: 502.3 tok/s
 prefill, 12.06 tok/s decode, 16.38 s TTFT, 0 cached).
 
