@@ -43,8 +43,9 @@ host usage is system-wide, not process RSS. Loading can peak higher.
 |---|---:|---:|---:|
 | Wrench EXL3 2.10 bpw | 153.6 GB | 0.922 | 77.99 % |
 | Best other public quant at this size (as of 2026-10-18) | 153.6 GB | 0.962 | 77.66 % |
+| bartowski IQ2_XXS (GGUF) | 170.8 GB | 1.085 | 75.21 % |
 
-**Verdict.** Mixed result; neither file is better overall. By KL, Wrench is 4.1% closer to the FP8 model (95% CI -0.052 to -0.027), all of it on the agentic-coding windows; on general text the other quant is slightly closer. The other quant also gives the actual next token higher probability on six full-vocabulary windows (NLL 0.085 lower, 6/6). Repeated measurements were identical. KL is not task accuracy. Same-config repeat floor: 0.0000.
+**Verdict.** Against bartowski's IQ2_XXS GGUF (170.8 GB, 11% larger), Wrench is closer to the FP8 model on all 92 windows (KL 0.922 vs 1.085; 95% CI of the difference +0.138 to +0.189) with 2.8 points higher top-1; bartowski's file gives the actual next token higher probability on the three agentic-coding windows of six full-vocabulary windows. Against the best other public quant at this size, the result is mixed: Wrench is 4.1% closer by KL (95% CI -0.052 to -0.027), all on agentic-coding windows; on general text the other file is slightly closer, and it gives the actual next token higher probability (NLL 0.085 lower, 6/6). Repeated measurements were identical. KL is not task accuracy. Same-config repeat floor: 0.0000.
 <!-- QUALITY:END -->
 
 Agreement with the FP8 base on 92 × 4096-token windows; KL and top-1 are not task accuracy.
