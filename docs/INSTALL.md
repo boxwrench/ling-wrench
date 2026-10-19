@@ -13,7 +13,7 @@ Do not treat an installation command's success as proof that generation works.
 
 Other AMD cards and NVIDIA/CUDA are **untested**. Windows/macOS setup is not covered.
 Installed RAM is not available RAM: keep at least 16 GiB available through 3.1 loading and inference, the verification guard.
-A 128 GB host is not a verified 3.1 configuration. Check free disk against the selected HF revision and allow space for dependencies, wheels and caches.
+**System RAM for 3.1:** with the fast settings (62 expert layers on the CPU) peak use was **134.7 GiB system-wide** at 8K and 64K, plus 31.2 GiB of VRAM. The experts are pinned host memory, so the Python process RSS (about 4-5 GB) does not show them: check system-wide available memory instead. 192 GB is tested and leaves about 50 GB free. A 128 GB host does not fit this placement on a 32 GB card and is not a verified 3.1 configuration. Check free disk against the selected HF revision and allow space for dependencies, wheels and caches.
 
 ## Ling-3.1 EXL3
 

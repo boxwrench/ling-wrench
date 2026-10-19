@@ -43,7 +43,7 @@ Built by the 3.1 quant on one R9700, one shot each, thinking on, unedited: [all 
 
 | | Tested setup |
 |---|---|
-| 3.1 | Linux/ROCm; R9700 32 GB; 192 GB host RAM; 153.6 GB weights plus setup space |
+| 3.1 | Linux/ROCm; R9700 32 GB; 192 GB host RAM (peak use about 135 GiB system-wide, 31 GiB VRAM); 153.6 GB weights plus setup space |
 | 3.0 | Linux/ROCm; 8060S with 128 GB unified memory; check HF file sizes before downloading |
 
 Other GPUs, CUDA, and smaller RAM sizes are untested. [Requirements and placement](docs/INSTALL.md).

@@ -29,7 +29,7 @@ The human version is [INSTALL](INSTALL.md). Commands there carry tested/untested
 
 | Path | Evidence | Decision |
 |---|---|---|
-| Linux, ROCm 7.2.1, R9700 32 GB, 192 GB host RAM | measured for 3.1 | use the pinned EXL3 stack |
+| Linux, ROCm 7.2.1, R9700 32 GB, 192 GB host RAM | measured for 3.1 (peak about 135 GiB system RAM, 31 GiB VRAM) | use the pinned EXL3 stack; stop if the PC has less than about 150 GB of RAM free |
 | Linux/ROCm, 8060S + Max+ 395, 128 GB unified | measured for 3.0 | use a compatible vLLM INT4 build; exact install artifact missing |
 | Linux, NVIDIA/CUDA | untested for both | explain the gap; get agreement before trying an upstream CUDA setup |
 | Other AMD GPU / less RAM / another OS | untested | report which tested requirement differs; do not promise fit |
