@@ -17,6 +17,7 @@ import argparse
 import importlib.util
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -93,7 +94,7 @@ def main():
     import torch
     import exllamav3
     from exllamav3 import Generator, Job
-    from exllamav3.generator.sampler.presets import ArgmaxSampler, CategoricalSampler
+    from exllamav3.generator.sampler.presets import ArgmaxSampler, ComboSampler
 
     t0 = time.perf_counter()
     model, config, cache, tokenizer, *_ = model_init.init(args)
@@ -142,9 +143,26 @@ def main():
             raise ValueError(f"prompt {prompt_len} tokens leaves no room in a {cache.max_num_tokens}-token cache")
         max_new = min(max_new, room)
         temperature = float(body.get("temperature", 0) or 0)
-        sampler = ArgmaxSampler() if temperature == 0 else CategoricalSampler(temperature)
+        top_p = float(body.get("top_p", 1.0))
+        top_k = int(body.get("top_k", 0) or 0)
+        seed = body.get("seed")
+        seed = None if seed is None else int(seed)
+        if not (0.0 <= top_p <= 1.0):
+            raise ValueError("top_p must be in [0, 1]")
+        if top_k < 0:
+            raise ValueError("top_k must be >= 0 (0 disables it)")
+        if temperature <= 0:
+            sampler = ArgmaxSampler()
+        else:
+            sampler = ComboSampler(temperature=temperature, top_p=top_p, top_k=top_k)
+        if seed is not None:
+            # The sampler derives its per-step noise from the job's seeded rng
+            # (Job(seed=...)); seed torch/random too for any other stochastic path.
+            torch.manual_seed(seed)
+            random.seed(seed)
         job = Job(input_ids=ids, max_new_tokens=max_new,
-                  stop_conditions=stop, sampler=sampler, decode_special_tokens=False)
+                  stop_conditions=stop, sampler=sampler, seed=seed,
+                  decode_special_tokens=False)
         with lock:
             gen.enqueue(job)
             torch.cuda.synchronize()
@@ -157,7 +175,19 @@ def main():
         if final is None:
             raise RuntimeError("generation produced no final result")
         out_ids = job.sequences[0].sequence_ids.torch()[0, prompt_len:].tolist()
-        answer = tokenizer.decode(torch.tensor(out_ids, dtype=torch.long), decode_special_tokens=False)
+        raw = tokenizer.decode(torch.tensor(out_ids, dtype=torch.long), decode_special_tokens=False)
+        think_close_id = tokenizer.single_id("</think>")
+        if think and think_close_id in out_ids:
+            cut = out_ids.index(think_close_id)
+            reasoning_ids, answer_ids = out_ids[:cut], out_ids[cut + 1:]
+        elif think:
+            reasoning_ids, answer_ids = out_ids, []
+        else:
+            reasoning_ids, answer_ids = [], out_ids
+        reasoning = tokenizer.decode(torch.tensor(reasoning_ids, dtype=torch.long),
+                                     decode_special_tokens=False) if reasoning_ids else ""
+        answer = tokenizer.decode(torch.tensor(answer_ids, dtype=torch.long),
+                                  decode_special_tokens=False) if answer_ids else ""
         prefill = float(final["time_prefill"])
         decode = float(final["time_generate"])
         new = int(final["new_tokens"])
@@ -171,14 +201,25 @@ def main():
             "completion_tokens": new,
             "cached_tokens": int(final["cached_tokens"]),
             "thinking": think,
+            "cache_size_tokens": int(cache.max_num_tokens),
+            "max_new_tokens": max_new,
+            "reasoning_tokens": len(reasoning_ids),
+            "answer_tokens": len(answer_ids),
+            "think_closed": (not think) or (think_close_id in out_ids),
+            "sampling": {"temperature": temperature, "top_p": top_p,
+                         "top_k": top_k, "seed": seed},
         }
+        if body.get("return_ids"):
+            timings["output_ids"] = out_ids
         print(json.dumps({"event": "request", **timings}), file=sys.stderr, flush=True)
         return {
             "id": "chatcmpl-" + uuid.uuid4().hex,
             "object": "chat.completion",
             "created": int(time.time()),
             "model": model_name,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": answer},
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": answer,
+                                                "reasoning_content": reasoning,
+                                                "raw_content": raw},
                          "finish_reason": "stop"}],
             "usage": {"prompt_tokens": prompt_len,
                       "completion_tokens": new,
