@@ -34,6 +34,8 @@ Actual prompt counts are in [runtime.json](results/runtime.json).
 | Method | OpenAI-compatible API; greedy; 64 generated tokens; three runs per prompt length; a random nonce per request, so no prefix reuse. Server flags: `--attention-backend TRITON_MLA --moe-backend triton --speculative-config '{"method":"mtp","num_speculative_tokens":1}' --max-model-len 262144 --gpu-memory-utilization 0.72 --max-num-seqs 6 --max-num-batched-tokens 8192 --enable-chunked-prefill --enable-prefix-caching --mamba-cache-mode align --trust-remote-code`; same flags for all three checkpoints. |
 <!-- RECEIPT:END -->
 
+**Known issue: stock vLLM 0.32.0 on gfx1151 (checked 2026-10-19).** With the official ROCm wheel (`0.32.0+rocm723`), the default CK `FLASH_ATTN` MLA prefill backend segfaults on the first prefill on Strix Halo. `-ac '{"mla_prefill_backend":"CPU"}'` avoids the crash: all three checkpoints load, MTP works, and each passes 4/4 greedy tasks. But prefill is about 12% slower at 1K and 29% slower at 8K than the table above (for example, Wrench at 836.7 / 778.4 tok/s at 1K / 8K, decode 28.17 / 26.47). The table above stays as measured. This note will be updated when upstream fixes MLA prefill on gfx1151.
+
 The official same-config range is the comparison floor: keep the full ranges, including the generic short-prompt outlier.
 These are serving checks, not evidence of a general speed advantage. MTP is enabled here; it is disabled in the 3.1 table.
 
