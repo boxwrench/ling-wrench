@@ -84,6 +84,10 @@ def main():
     model_init.add_args(ap, cache=True, add_sampling_args=False,
                         default_cache_size=8192, default_autosplit_max_batch_size=1)
     ap.add_argument("-gcs", "--generator_chunk_size", type=int, default=2048)
+    # Prefix reuse: model_init defines -rcs/--recurrent_cache_size (GiB of host RAM for KDA
+    # state checkpoints). Off by default here so fresh-prompt benchmarks stay cold; pass
+    # "-rcs 4.0" for chats and agent loops, where a follow-up resumes from the shared prefix.
+    ap.set_defaults(recurrent_cache_size=0.0)
     args = ap.parse_args()
 
     if args.host not in ("127.0.0.1", "localhost", "::1"):
@@ -103,7 +107,7 @@ def main():
           file=sys.stderr, flush=True)
     gen = Generator(model=model, cache=cache, tokenizer=tokenizer, max_batch_size=1,
                     max_chunk_size=args.generator_chunk_size, ngram_match_min=0,
-                    recurrent_cache_size=0)
+                    recurrent_cache_size=int(getattr(args, "recurrent_cache_size", 0) * 1024**3))
     fmt = load_ling_format(Path(exllamav3.__file__).resolve().parents[1])
     stop = [s for s in fmt.stop_conditions(tokenizer) if s]
     if config.eos_token_id_list and all(config.eos_token_id_list):

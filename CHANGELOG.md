@@ -1,3 +1,7 @@
+# v0.4.2 — 2026-10-20
+
+- `bench/serve_fast.py`: `-rcs` now reaches the generator (it was fixed at 0), enabling prefix reuse for chats and agent loops: a 16K conversation's next turn 43.0 s -> 2.4 s to first token, same greedy tokens. Off by default. Documented in the 3.1 page and bench README.
+
 # v0.4.1 — 2026-10-19
 
 - Known issue: with `-nw`, the first long request to a cold server can return `NonFiniteLogits`; send a short request first. Documented in the 3.1 page, bench README and TROUBLESHOOTING.

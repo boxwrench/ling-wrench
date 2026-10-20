@@ -64,3 +64,6 @@ generator's own prefill/decode times and token counts.
 EXL3_MOE_STREAM_T=6 python bench/serve_fast.py -m "$MODEL" \
   -dev cuda:0 -mcl 62 -mct 8 -gcs 8192 -cs 9216 --port 8000
 ```
+
+**Prefix reuse for chats and agent loops (`-rcs`, 2026-10-20):** add `-rcs 4.0` (GiB of host RAM for saved KDA state) and a cache large enough for the conversation (`-cs`). A follow-up request that extends the previous prompt then resumes from the saved state instead of prefilling it again. Measured on the R9700 with `-cs 34816 -gcs 4096 -rcs 4.0`: a 16K-token conversation's next turn (256 new tokens) went from 43.0 s to 2.4 s time-to-first-token, and an identical 32K repeat from 84.1 s to 3.1 s, with the same 32 greedy tokens as a cold prefill at 8K, 12K and 16K resume points. A 16K prompt's checkpoints take ~0.55 GiB. Off by default, so fresh-prompt benchmarks stay cold; the response's `timings.cached_tokens` shows how much was reused.
+
